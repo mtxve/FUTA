@@ -1,7 +1,9 @@
 // ==UserScript==
-// @name         Flatline's Ultimate Networked Torn Assistant
+// @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.4.4
+// @version      0.4.2
+// @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
+// @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
 // @match        https://www.torn.com/*
 // @grant        GM.getValue
@@ -9,7 +11,6 @@
 // @grant        GM.xmlHttpRequest
 // @connect      46.202.179.156
 // @connect      api.torn.com
-// @update       https://github.com/mtxve/FUTA/blob/d8ed33284ed8f69f1c5baba583f2f2fc1061402e/futa.js
 // ==/UserScript==
 
 (function addCustomStyles(){
@@ -97,7 +98,7 @@
       gap: 20px;
       margin-top: 10px;
     }
-    
+
     /* Additional style to mimic People header sizing for Charlemagne */
     #charlemagne-header {
       padding-top: 3px;
@@ -443,7 +444,7 @@
           </div>
           <div id="content-about" hidden>
             <p style="font-size: 12px; margin: 8px 0;">Made by <a href="https://www.torn.com/profiles.php?XID=2270413" class="t-blue">Asemov</a></p>
-            <p style="font-size: 12px; margin: 8px 0;">Version: 0.4.4</p>
+            <p style="font-size: 12px; margin: 8px 0;">Version: 0.4.2</p>
             <p style="font-size: 12px; margin: 8px 0;">War Mode: <span id="war-mode-banner">${currentWarMode}</span></p>
           </div>
         </div>
