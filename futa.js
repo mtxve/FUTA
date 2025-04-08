@@ -354,7 +354,7 @@ async function createChatPanel() {
           <div class="collapsible">
             <div class="collapsible-header">Attack Settings:</div>
             <div class="collapsible-content">
-              <!-- Moved the "Open attack in new tab" toggle below "Quick Attack" -->
+              <!-- Moved toggles: Quick Attack comes first, then Open attack in new tab, etc. -->
               <label><input type="checkbox" id="quick-attack-toggle"> Quick Attack</label><br/>
               <label><input type="checkbox" id="open-attack-new-tab"> Open attack in new tab</label><br/>
               <label><input type="checkbox" id="minimize-on-attack"> Minimize on attack page</label><br/>
@@ -392,16 +392,46 @@ async function createChatPanel() {
     document.getElementById("request-revive").disabled = false;
   }
 
-  const tabMap = { "tab-main": "content-main", "tab-about": "content-about", "tab-settings": "content-settings" };
-  for (const [tabId, contentId] of Object.entries(tabMap)) {
-    document.getElementById(tabId).onclick = async () => {
-      Object.keys(tabMap).forEach(id => document.getElementById(id).classList.remove("active-tab"));
-      Object.values(tabMap).forEach(id => document.getElementById(id).hidden = true);
-      document.getElementById(contentId).hidden = false;
-      document.getElementById(tabId).classList.add("active-tab");
-      await GM.setValue(tabStateKey, contentId);
-    };
-  }
+  const tabMap = {
+  "tab-main": "content-main",
+  "tab-about": "content-about",
+  "tab-settings": "content-settings"
+};
+
+Object.entries(tabMap).forEach(([tabId, contentId]) => {
+  const tabButton = document.getElementById(tabId);
+  tabButton.onclick = async () => {
+    Object.keys(tabMap).forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) {
+        btn.className = "chat-list-header__tab___okUFS";
+      }
+    });
+    Object.values(tabMap).forEach(id => {
+      const content = document.getElementById(id);
+      if (content) content.hidden = true;
+    });
+    const activeContent = document.getElementById(contentId);
+    if (activeContent) activeContent.hidden = false;
+    tabButton.className = "chat-list-header__tab___okUFS chat-list-header__tab--active___cVDea";
+    await GM.setValue(tabStateKey, contentId);
+  };
+});
+(async function persistActiveTab() {
+  const activeContent = await GM.getValue(tabStateKey, "content-main");
+  Object.entries(tabMap).forEach(([tabId, contentId]) => {
+    const tabButton = document.getElementById(tabId);
+    if (tabButton) {
+      if (contentId === activeContent) {
+        tabButton.className = "chat-list-header__tab___okUFS chat-list-header__tab--active___cVDea";
+        document.getElementById(contentId).hidden = false;
+      } else {
+        tabButton.className = "chat-list-header__tab___okUFS";
+        document.getElementById(contentId).hidden = true;
+      }
+    }
+  });
+})();
   if (document.getElementById(lastTab)) {
     document.getElementById(lastTab).hidden = false;
     const activeTab = Object.keys(tabMap).find(key => tabMap[key] === lastTab);
@@ -491,6 +521,19 @@ async function createChatPanel() {
   if (minimizeAttack && window.location.href.startsWith("https://www.torn.com/loader.php?sid=attack")) {
     wrapper.hidden = true;
   }
+
+  // Persist active tab styling on panel creation.
+  (async function persistActiveTab() {
+    const activeContent = await GM.getValue(tabStateKey, "content-main");
+    const tabMap = { "tab-main": "content-main", "tab-about": "content-about", "tab-settings": "content-settings" };
+    Object.entries(tabMap).forEach(([tabId, contentId]) => {
+      if (contentId === activeContent) {
+        document.getElementById(tabId).classList.add("active-tab");
+      } else {
+        document.getElementById(tabId).classList.remove("active-tab");
+      }
+    });
+  })();
 }
 
 function setupCollapsibleSections() {
