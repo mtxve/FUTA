@@ -116,7 +116,6 @@
   let currentWarMode = await GM.getValue("currentWarMode", "Peace");
   let pingPromise = null;
 
-  // Consolidated ping logic with in-flight handling.
   async function getPingData() {
     const now = Date.now();
     const lastPingTimestamp = parseInt(localStorage.getItem("lastPingTimestamp") || "0", 10);
@@ -126,7 +125,6 @@
       try {
         return JSON.parse(cachedData);
       } catch (e) {
-        // Fall through if parsing fails.
       }
     }
     if (pingPromise) {
@@ -158,7 +156,6 @@
     return pingPromise;
   }
 
-  // Update war mode and connection status using the consolidated ping result.
   async function updateWarModeStatusPersist() {
     const data = await getPingData();
     currentWarMode = data.war_mode || "Peace";
@@ -174,7 +171,6 @@
     }
   }
 
-  // Caching Torn API summary for 30 seconds.
   async function fetchCheckSummary() {
     const now = Date.now();
     const lastSummaryTimestamp = parseInt(localStorage.getItem("lastSummaryTimestamp") || "0", 10);
@@ -251,7 +247,6 @@
     }
   }
 
-  // Restore saved toggle states for Big Boi and Assist buttons.
   async function restoreToggleButtons() {
     const storedBigBoi = await GM.getValue("big_boi_mode_enabled", false);
     const storedAssist = await GM.getValue("assist_mode_enabled", false);
@@ -267,10 +262,8 @@
     }
   }
 
-  // Check battlestats and add/update toggle buttons.
   async function checkBattlestatsAndAddButtons(apiKey) {
     const extraButtons = document.getElementById("extra-buttons");
-    // Always create the Big Boi and Assist buttons if not present.
     let bigBoiButton = document.getElementById("big-boi-mode");
     if (!bigBoiButton) {
       bigBoiButton = document.createElement("button");
@@ -287,7 +280,6 @@
       assistButton.innerText = "Assist Mode";
       extraButtons.appendChild(assistButton);
     }
-    // If no API key, disable the buttons.
     if (!apiKey) {
       bigBoiButton.disabled = true;
       bigBoiButton.style.borderColor = "grey";
@@ -295,7 +287,6 @@
       assistButton.style.borderColor = "grey";
       return;
     }
-    // Run the battlestats check (runs once).
     GM.xmlHttpRequest({
       method: "GET",
       url: `https://api.torn.com/user/?selections=battlestats&key=${apiKey}`,
@@ -309,7 +300,6 @@
           if (!bigBoiValid) {
             bigBoiButton.style.borderColor = "grey";
           } else {
-            // If eligible, restore its toggle state.
             const storedBigBoi = await GM.getValue("big_boi_mode_enabled", false);
             bigBoiButton.setAttribute("data-enabled", storedBigBoi);
             bigBoiButton.style.borderColor = storedBigBoi ? "green" : "red";
@@ -322,7 +312,6 @@
               GM.setValue("big_boi_mode_enabled", newState);
             };
           }
-          // Assist Mode remains enabled if an API key is provided.
           assistButton.disabled = false;
           const storedAssist = await GM.getValue("assist_mode_enabled", false);
           assistButton.setAttribute("data-enabled", storedAssist);
@@ -540,8 +529,6 @@
     setInterval(updateMainTabSummary, 60000);
     setupCollapsibleSections();
     if (savedKey) {
-      // Restore toggle states immediately,
-      // then update eligibility with battlestats.
       restoreToggleButtons();
       checkBattlestatsAndAddButtons(savedKey);
     }
@@ -630,7 +617,6 @@
     }
   }
 
-  // Initialize panel and periodic updates.
   createChatButton();
   enableQuickAttackAndHiding();
   setInterval(executeAttackNotifier, 5000);
