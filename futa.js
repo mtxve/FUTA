@@ -9,7 +9,7 @@
 // @grant        GM.xmlHttpRequest
 // @connect      46.202.179.156
 // @connect      api.torn.com
-// @update       
+// @update       https://github.com/mtxve/FUTA/blob/d8ed33284ed8f69f1c5baba583f2f2fc1061402e/futa.js
 // ==/UserScript==
 
 (function addCustomStyles(){
