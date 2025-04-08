@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.4.2
+// @version      0.4.4
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -432,7 +432,7 @@
           </div>
           <div id="content-about" hidden>
             <p style="font-size: 12px; margin: 8px 0;">Made by <a href="https://www.torn.com/profiles.php?XID=2270413" class="t-blue">Asemov</a></p>
-            <p style="font-size: 12px; margin: 8px 0;">Version: 0.4.2</p>
+            <p style="font-size: 12px; margin: 8px 0;">Version: 0.4.4</p>
             <p style="font-size: 12px; margin: 8px 0;">War Mode: <span id="war-mode-banner">${currentWarMode}</span></p>
           </div>
         </div>
