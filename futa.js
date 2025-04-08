@@ -110,32 +110,26 @@
 
 (async function () {
   'use strict';
-  const THROTTLE_INTERVAL = 30000; // 30 seconds throttle interval
+  const THROTTLE_INTERVAL = 30000;
   const panelId = "bust-panel";
   const pingURL = "http://46.202.179.156:8081/ping";
   const tabStateKey = "charlemagne_last_tab";
   const PING_INTERVAL = 60000;
 
   let currentWarMode = await GM.getValue("currentWarMode", "Peace");
-
-  // --- Consolidated Ping Logic with In-Flight Handling ---
-  let pingPromise = null;  // Global variable to hold a promise if ping is in progress
+  let pingPromise = null; 
 
   async function getPingData() {
     const now = Date.now();
     const lastPingTimestamp = parseInt(localStorage.getItem("lastPingTimestamp") || "0", 10);
     const cachedData = localStorage.getItem("lastPingData");
 
-    // If the last ping is recent and data exists, return it immediately.
     if ((now - lastPingTimestamp) < THROTTLE_INTERVAL && cachedData) {
       try {
         return JSON.parse(cachedData);
       } catch (e) {
-        // Fall through to fetching if parsing fails.
       }
     }
-
-    // If a ping is already in progress, return its promise.
     if (pingPromise) {
       return pingPromise;
     }
@@ -153,7 +147,7 @@
           } catch (e) {
             resolve({});
           } finally {
-            pingPromise = null; // Clear in-flight flag
+            pingPromise = null; 
           }
         },
         onerror: () => {
@@ -166,9 +160,7 @@
 
     return pingPromise;
   }
-  // --- End Consolidated Ping Logic ---
 
-  // Update war mode and connection status using the consolidated ping result.
   async function updateWarModeStatusPersist() {
     const data = await getPingData();
     currentWarMode = data.war_mode || "Peace";
@@ -177,7 +169,6 @@
     if (bannerEl) {
       const connectionStatusEl = bannerEl.querySelector("#connection-status");
       if (connectionStatusEl) {
-        // If data was returned, we consider the connection established.
         const isConnected = Object.keys(data).length > 0;
         connectionStatusEl.innerText = isConnected ? "Established" : "No Connection";
         connectionStatusEl.style.color = isConnected ? "green" : "red";
@@ -185,7 +176,6 @@
     }
   }
 
-  // --- Torn API Summary (unchanged) ---
   async function fetchCheckSummary() {
     const now = Date.now();
     const lastSummaryTimestamp = parseInt(localStorage.getItem("lastSummaryTimestamp") || "0", 10);
@@ -261,7 +251,6 @@
       summaryBox.innerText = await fetchCheckSummary();
     }
   }
-  // --- End Torn API Summary Section ---
 
   async function checkBattlestatsAndAddButtons(apiKey) {
     const extraButtons = document.getElementById("extra-buttons");
@@ -366,7 +355,6 @@
     const wasOpen = await GM.getValue("charlemagne_panel_open", false);
     const lastTab = await GM.getValue(tabStateKey, "content-main");
 
-    // Use the consolidated ping to get connection data.
     const pingData = await getPingData();
     const isConnected = Object.keys(pingData).length > 0;
     const connectionStatusText = isConnected ? "Established" : "No Connection";
@@ -627,7 +615,6 @@
     }
   }
 
-  // Initialize panel and periodic updates.
   createChatButton();
   enableQuickAttackAndHiding();
   setInterval(executeAttackNotifier, 5000);
