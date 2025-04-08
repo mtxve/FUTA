@@ -53,7 +53,6 @@
     body.dark-mode .chat-list-header__tab___okUFS p {
       color: #fff !important;
     }
-
     /* Light mode styles */
     body:not(.dark-mode) .active-tab {
       background-color: #eee !important;
@@ -91,15 +90,13 @@
     body:not(.dark-mode) .chat-list-header__tab___okUFS p {
       color: #000 !important;
     }
-
-    /* Buttons container remains the same */
+    /* Buttons container */
     #main-buttons, #extra-buttons {
       display: flex;
       gap: 20px;
       margin-top: 10px;
     }
-
-    /* Additional style to mimic People header sizing for Charlemagne */
+    /* Mimic People header sizing for Charlemagne */
     #charlemagne-header {
       padding-top: 3px;
       padding-bottom: 3px;
@@ -117,8 +114,9 @@
   const PING_INTERVAL = 60000;
 
   let currentWarMode = await GM.getValue("currentWarMode", "Peace");
-  let pingPromise = null; 
+  let pingPromise = null;
 
+  // Consolidated ping logic with in-flight handling.
   async function getPingData() {
     const now = Date.now();
     const lastPingTimestamp = parseInt(localStorage.getItem("lastPingTimestamp") || "0", 10);
@@ -128,12 +126,12 @@
       try {
         return JSON.parse(cachedData);
       } catch (e) {
+        // Fall through if parsing fails.
       }
     }
     if (pingPromise) {
       return pingPromise;
     }
-
     pingPromise = new Promise((resolve) => {
       GM.xmlHttpRequest({
         method: "GET",
@@ -147,7 +145,7 @@
           } catch (e) {
             resolve({});
           } finally {
-            pingPromise = null; 
+            pingPromise = null;
           }
         },
         onerror: () => {
@@ -157,10 +155,10 @@
         }
       });
     });
-
     return pingPromise;
   }
 
+  // Update war mode and connection status using the consolidated ping result.
   async function updateWarModeStatusPersist() {
     const data = await getPingData();
     currentWarMode = data.war_mode || "Peace";
@@ -176,6 +174,7 @@
     }
   }
 
+  // Caching Torn API summary for 30 seconds.
   async function fetchCheckSummary() {
     const now = Date.now();
     const lastSummaryTimestamp = parseInt(localStorage.getItem("lastSummaryTimestamp") || "0", 10);
@@ -252,32 +251,51 @@
     }
   }
 
+  // Restore saved toggle states for Big Boi and Assist buttons.
+  async function restoreToggleButtons() {
+    const storedBigBoi = await GM.getValue("big_boi_mode_enabled", false);
+    const storedAssist = await GM.getValue("assist_mode_enabled", false);
+    const bigBoiButton = document.getElementById("big-boi-mode");
+    const assistButton = document.getElementById("assist-mode");
+    if (bigBoiButton) {
+      bigBoiButton.setAttribute("data-enabled", storedBigBoi);
+      bigBoiButton.style.borderColor = storedBigBoi ? "green" : "red";
+    }
+    if (assistButton) {
+      assistButton.setAttribute("data-enabled", storedAssist);
+      assistButton.style.borderColor = storedAssist ? "green" : "red";
+    }
+  }
+
+  // Check battlestats and add/update toggle buttons.
   async function checkBattlestatsAndAddButtons(apiKey) {
     const extraButtons = document.getElementById("extra-buttons");
+    // Always create the Big Boi and Assist buttons if not present.
+    let bigBoiButton = document.getElementById("big-boi-mode");
+    if (!bigBoiButton) {
+      bigBoiButton = document.createElement("button");
+      bigBoiButton.id = "big-boi-mode";
+      bigBoiButton.className = "torn-btn";
+      bigBoiButton.innerText = "Big Boi Mode";
+      extraButtons.appendChild(bigBoiButton);
+    }
+    let assistButton = document.getElementById("assist-mode");
+    if (!assistButton) {
+      assistButton = document.createElement("button");
+      assistButton.id = "assist-mode";
+      assistButton.className = "torn-btn";
+      assistButton.innerText = "Assist Mode";
+      extraButtons.appendChild(assistButton);
+    }
+    // If no API key, disable the buttons.
     if (!apiKey) {
-      let bigBoiButton = document.getElementById("big-boi-mode");
-      if (!bigBoiButton) {
-        bigBoiButton = document.createElement("button");
-        bigBoiButton.id = "big-boi-mode";
-        bigBoiButton.className = "torn-btn";
-        bigBoiButton.innerText = "Big Boi Mode";
-        extraButtons.appendChild(bigBoiButton);
-      }
       bigBoiButton.disabled = true;
       bigBoiButton.style.borderColor = "grey";
-
-      let assistButton = document.getElementById("assist-mode");
-      if (!assistButton) {
-        assistButton = document.createElement("button");
-        assistButton.id = "assist-mode";
-        assistButton.className = "torn-btn";
-        assistButton.innerText = "Assist Mode";
-        extraButtons.appendChild(assistButton);
-      }
       assistButton.disabled = true;
       assistButton.style.borderColor = "grey";
       return;
     }
+    // Run the battlestats check (runs once).
     GM.xmlHttpRequest({
       method: "GET",
       url: `https://api.torn.com/user/?selections=battlestats&key=${apiKey}`,
@@ -287,35 +305,26 @@
           const total = data.total;
           const bigBoiValid = total > 4000000000;
           await GM.setValue("big_boi_valid", bigBoiValid);
-          let bigBoiButton = document.getElementById("big-boi-mode");
-          if (!bigBoiButton) {
-            bigBoiButton = document.createElement("button");
-            bigBoiButton.id = "big-boi-mode";
-            bigBoiButton.className = "torn-btn";
-            bigBoiButton.innerText = "Big Boi Mode";
-            extraButtons.appendChild(bigBoiButton);
-          }
           bigBoiButton.disabled = !bigBoiValid;
-          bigBoiButton.style.borderColor = bigBoiValid ? "green" : "red";
-          bigBoiButton.onclick = function() {
-            if (bigBoiButton.disabled) return;
-            const current = bigBoiButton.getAttribute("data-enabled") === "true";
-            const newState = !current;
-            bigBoiButton.setAttribute("data-enabled", newState);
-            bigBoiButton.style.borderColor = newState ? "green" : "red";
-            GM.setValue("big_boi_mode_enabled", newState);
-          };
-
-          let assistButton = document.getElementById("assist-mode");
-          if (!assistButton) {
-            assistButton = document.createElement("button");
-            assistButton.id = "assist-mode";
-            assistButton.className = "torn-btn";
-            assistButton.innerText = "Assist Mode";
-            extraButtons.appendChild(assistButton);
+          if (!bigBoiValid) {
+            bigBoiButton.style.borderColor = "grey";
+          } else {
+            // If eligible, restore its toggle state.
+            const storedBigBoi = await GM.getValue("big_boi_mode_enabled", false);
+            bigBoiButton.setAttribute("data-enabled", storedBigBoi);
+            bigBoiButton.style.borderColor = storedBigBoi ? "green" : "red";
+            bigBoiButton.onclick = function() {
+              if (bigBoiButton.disabled) return;
+              const current = bigBoiButton.getAttribute("data-enabled") === "true";
+              const newState = !current;
+              bigBoiButton.setAttribute("data-enabled", newState);
+              bigBoiButton.style.borderColor = newState ? "green" : "red";
+              GM.setValue("big_boi_mode_enabled", newState);
+            };
           }
-          const storedAssist = await GM.getValue("assist_mode_enabled", false);
+          // Assist Mode remains enabled if an API key is provided.
           assistButton.disabled = false;
+          const storedAssist = await GM.getValue("assist_mode_enabled", false);
           assistButton.setAttribute("data-enabled", storedAssist);
           assistButton.style.borderColor = storedAssist ? "green" : "red";
           assistButton.onclick = function() {
@@ -327,10 +336,12 @@
           };
         } catch(e) {
           console.error("Error parsing battlestats", e);
+          restoreToggleButtons();
         }
       },
       onerror: function(err) {
         console.error("Error fetching battlestats", err);
+        restoreToggleButtons();
       }
     });
   }
@@ -385,8 +396,7 @@
         </div>
         <div class="settings-panel__section___Jszgh" style="padding: 12px;">
           <div id="content-main" hidden>
-            <div id="check-summary-box" style="padding:10px;margin-bottom:10px;font-size:13px;
-            border-radius:5px;white-space:pre-line;border:1px solid #444;background:inherit;color:inherit">
+            <div id="check-summary-box" style="padding:10px;margin-bottom:10px;font-size:13px; border-radius:5px;white-space:pre-line;border:1px solid #444;background:inherit;color:inherit">
               Loading status...
             </div>
             <div id="main-buttons">
@@ -484,7 +494,7 @@
       const key = document.getElementById("api-key").value.trim();
       await GM.setValue("api_key", key);
       await GM.setValue("api_key_provided", true);
-      alert("🔐 API Key saved locally!");
+      alert("API Key saved & sent to Charlemagne");
       document.getElementById("request-bust").disabled = false;
       document.getElementById("request-revive").disabled = false;
       checkBattlestatsAndAddButtons(key);
@@ -529,7 +539,12 @@
     await updateMainTabSummary();
     setInterval(updateMainTabSummary, 60000);
     setupCollapsibleSections();
-    checkBattlestatsAndAddButtons(savedKey);
+    if (savedKey) {
+      // Restore toggle states immediately,
+      // then update eligibility with battlestats.
+      restoreToggleButtons();
+      checkBattlestatsAndAddButtons(savedKey);
+    }
   }
 
   function setupCollapsibleSections() {
@@ -615,6 +630,7 @@
     }
   }
 
+  // Initialize panel and periodic updates.
   createChatButton();
   enableQuickAttackAndHiding();
   setInterval(executeAttackNotifier, 5000);
