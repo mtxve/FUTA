@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.5.71a
+// @version      0.5.72a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -53,7 +53,7 @@ const panelId = "bust-panel";
 const pingURL = "http://46.202.179.156:8081/ping";
 const tabStateKey = "charlemagne_last_tab";
 const PING_INTERVAL = 30000;
-const VERSION = "0.5.71a";
+const VERSION = "0.5.72a";
 let currentWarMode = await GM.getValue("currentWarMode", "Peace");
 let pingPromise = null;
 let tornApiStatus = "Connecting...";
@@ -147,8 +147,10 @@ async function updateTornAPIStatusForBanner() {
 
 async function updatePersistentBanner() {
   await updateTornAPIStatusForBanner();
+  const summary = await fetchCheckSummary();
   const pingData = await getPingData();
   const charlStatus = (Object.keys(pingData).length > 0) ? "Established" : "No Connection";
+  const tornStatus = (summary.indexOf("❌") === 0) ? "No Connection" : "Established";
   const charlColor = (charlStatus === "Established") ? "green" : "red";
   const tornColor = (tornApiStatus === "Established") ? "green" : "red";
   const bannerEl = document.getElementById("persistent-banner");
@@ -156,7 +158,7 @@ async function updatePersistentBanner() {
     if (charlStatus !== "Established" || tornApiStatus !== "Established") {
       bannerEl.innerHTML = `
         Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-        Connection to TornAPI: <strong style="color: ${tornColor};">${tornColor}</strong>
+        Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong>
       `;
       bannerEl.style.display = "block";
     } else {
@@ -168,12 +170,14 @@ async function updatePersistentBanner() {
 async function updateSettingsAPIStatus() {
   await updateTornAPIStatusForBanner();
   const pingData = await getPingData();
+  const summary = await fetchCheckSummary();
+  const tornStatus = (summary.indexOf("❌") === 0) ? "No Connection" : "Established";
   const charlStatus = (Object.keys(pingData).length > 0) ? "Established" : "No Connection";
   const charlColor = (charlStatus === "Established") ? "green" : "red";
   const tornColor = (tornApiStatus === "Established") ? "green" : "red";
   const statusHTML = `
     Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-    Connection to TornAPI: <strong style="color: ${tornColor};">${tornColor}</strong><br/>
+    Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong><br/>
     Version: ${VERSION}<br/>
     Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank">Asemov</a>
   `;
@@ -610,7 +614,7 @@ function setupCollapsibleSections() {
 async function togglePanel() {
   const panel = document.getElementById(panelId);
   if (panel) {
-    const newState = !panel.hidden;
+    const newState = !panel.hidden; // new state after toggling
     panel.hidden = newState;
     await GM.setValue("charlemagne_panel_open", newState);
   }
