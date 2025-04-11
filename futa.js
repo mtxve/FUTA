@@ -170,15 +170,13 @@ async function updatePersistentBanner() {
 async function updateSettingsAPIStatus() {
   await updateTornAPIStatusForBanner();
   const pingData = await getPingData();
-  const summary = await fetchCheckSummary();
-  const tornStatus = (summary.indexOf("❌") === 0) ? "No Connection" : "Established";
   const charlStatus = (Object.keys(pingData).length > 0) ? "Established" : "No Connection";
   const charlColor = (charlStatus === "Established") ? "green" : "red";
   const tornColor = (tornApiStatus === "Established") ? "green" : "red";
   const statusHTML = `
     Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-    Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong><br/>
-    Version: ${VERSION}<br/>
+    Connection to TornAPI: <strong style="color: ${tornColor};">${tornColor}</strong><br/>
+    Version: <a href="https://www.torn.com/forums.php#/p=threads&f=999&t=16460741&b=1&a=36891&to=25815503" target="_blank" style="color: inherit; text-decoration: underline;">${VERSION}</a><br/>
     Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank">Asemov</a>
   `;
   const statusEl = document.getElementById("settings-api-status");
