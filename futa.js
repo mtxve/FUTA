@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.6.73a
+// @version      0.6.731a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -53,7 +53,7 @@ const panelId = "bust-panel";
 const pingURL = "http://46.202.179.156:8081/ping";
 const tabStateKey = "charlemagne_last_tab";
 const PING_INTERVAL = 30000;
-const VERSION = "0.6.73a";
+const VERSION = "0.6.731a";
 let currentWarMode = await GM.getValue("currentWarMode", "Peace");
 let pingPromise = null;
 let tornApiStatus = "Connecting...";
