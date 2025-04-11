@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.5.73a
+// @version      0.6.73a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -53,7 +53,7 @@ const panelId = "bust-panel";
 const pingURL = "http://46.202.179.156:8081/ping";
 const tabStateKey = "charlemagne_last_tab";
 const PING_INTERVAL = 30000;
-const VERSION = "0.5.73a";
+const VERSION = "0.6.73a";
 let currentWarMode = await GM.getValue("currentWarMode", "Peace");
 let pingPromise = null;
 let tornApiStatus = "Connecting...";
@@ -93,27 +93,30 @@ function waitForElm(selector) {
     if (document.querySelector(selector)) return resolve(document.querySelector(selector));
     const observer = new MutationObserver(() => {
       const found = document.querySelector(selector);
-      if (found) {
-        observer.disconnect();
-        resolve(found);
-      }
+      if (found) { observer.disconnect(); resolve(found); }
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
   });
 }
 
 async function getPingData() {
+  const apiKey = await GM.getValue("api_key", "");
+  if (!apiKey) {
+    console.warn("No API key provided. Ping request skipped.");
+    return {};
+  }
   const now = Date.now();
   const lastPingTimestamp = parseInt(localStorage.getItem("lastPingTimestamp") || "0", 10);
   const cachedData = localStorage.getItem("lastPingData");
   if ((now - lastPingTimestamp) < THROTTLE_INTERVAL && cachedData) {
-    try { return JSON.parse(cachedData); } catch (e) { }
+    try { return JSON.parse(cachedData); } catch (e) {}
   }
   if (pingPromise) return pingPromise;
+  const pingUrlWithKey = `${pingURL}?api_key=${encodeURIComponent(apiKey)}`;
   pingPromise = new Promise((resolve) => {
     GM.xmlHttpRequest({
       method: "GET",
-      url: pingURL,
+      url: pingUrlWithKey,
       onload: (res) => {
         try {
           const data = JSON.parse(res.responseText);
@@ -287,45 +290,35 @@ async function checkBattlestatsAndAddButtons(apiKey) {
     assistButton.disabled = true; assistButton.style.borderColor = "grey";
     return;
   }
-  GM.xmlHttpRequest({
-    method: "GET",
-    url: `https://api.torn.com/user/?selections=battlestats&key=${apiKey}`,
-    onload: async function(res) {
-      try {
-        const data = JSON.parse(res.responseText);
-        const total = data.total;
-        const bigBoiValid = total > 4000000000;
-        await GM.setValue("big_boi_valid", bigBoiValid);
-        bigBoiButton.disabled = !bigBoiValid;
-        if (!bigBoiValid) { bigBoiButton.style.borderColor = "grey"; }
-        else {
-          const storedBigBoi = await GM.getValue("big_boi_mode_enabled", false);
-          bigBoiButton.setAttribute("data-enabled", storedBigBoi);
-          bigBoiButton.style.borderColor = storedBigBoi ? "green" : "red";
-          bigBoiButton.onclick = function() {
-            if (bigBoiButton.disabled) return;
-            const current = bigBoiButton.getAttribute("data-enabled") === "true";
-            const newState = !current;
-            bigBoiButton.setAttribute("data-enabled", newState);
-            bigBoiButton.style.borderColor = newState ? "green" : "red";
-            GM.setValue("big_boi_mode_enabled", newState);
-          };
-        }
-        assistButton.disabled = false;
-        const storedAssist = await GM.getValue("assist_mode_enabled", false);
-        assistButton.setAttribute("data-enabled", storedAssist);
-        assistButton.style.borderColor = storedAssist ? "green" : "red";
-        assistButton.onclick = function() {
-          const current = assistButton.getAttribute("data-enabled") === "true";
-          const newState = !current;
-          assistButton.setAttribute("data-enabled", newState);
-          assistButton.style.borderColor = newState ? "green" : "red";
-          GM.setValue("assist_mode_enabled", newState);
-        };
-      } catch(e) { console.error("Error parsing battlestats", e); restoreToggleButtons(); }
-    },
-    onerror: function(err) { console.error("Error fetching battlestats", err); restoreToggleButtons(); }
-  });
+  const bigBoiValid = await GM.getValue("big_boi_valid", false);
+  await GM.setValue("big_boi_valid", bigBoiValid);
+  bigBoiButton.disabled = !bigBoiValid;
+  if (!bigBoiValid) {
+    bigBoiButton.style.borderColor = "grey";
+  } else {
+    const storedBigBoi = await GM.getValue("big_boi_mode_enabled", false);
+    bigBoiButton.setAttribute("data-enabled", storedBigBoi);
+    bigBoiButton.style.borderColor = storedBigBoi ? "green" : "red";
+    bigBoiButton.onclick = function() {
+      if (bigBoiButton.disabled) return;
+      const current = bigBoiButton.getAttribute("data-enabled") === "true";
+      const newState = !current;
+      bigBoiButton.setAttribute("data-enabled", newState);
+      bigBoiButton.style.borderColor = newState ? "green" : "red";
+      GM.setValue("big_boi_mode_enabled", newState);
+    };
+  }
+  assistButton.disabled = false;
+  const storedAssist = await GM.getValue("assist_mode_enabled", false);
+  assistButton.setAttribute("data-enabled", storedAssist);
+  assistButton.style.borderColor = storedAssist ? "green" : "red";
+  assistButton.onclick = function() {
+    const current = assistButton.getAttribute("data-enabled") === "true";
+    const newState = !current;
+    assistButton.setAttribute("data-enabled", newState);
+    assistButton.style.borderColor = newState ? "green" : "red";
+    GM.setValue("assist_mode_enabled", newState);
+  };
 }
 
 async function createChatButton() {
@@ -347,7 +340,6 @@ async function createChatPanel() {
   const savedKey = await GM.getValue("api_key", "");
   const wasOpen = await GM.getValue("charlemagne_panel_open", false);
   const lastTab = await GM.getValue(tabStateKey, "content-main");
-
   const pingData = await getPingData();
   const isConnected = Object.keys(pingData).length > 0;
   const charlStatus = isConnected ? "Established" : "No Connection";
@@ -393,7 +385,7 @@ async function createChatPanel() {
           </div>
           <div id="extra-buttons"></div>
         </div>
-        <div id="content-about" hidden><!-- Placeholder --></div>
+        <div id="content-about" hidden></div>
         <div id="content-settings" hidden>
           <div class="collapsible">
             <div class="collapsible-header">API Key:</div>
@@ -458,23 +450,12 @@ async function createChatPanel() {
     document.getElementById("request-revive").disabled = false;
   }
 
-  const tabMap = {
-    "tab-main": "content-main",
-    "tab-about": "content-about",
-    "tab-settings": "content-settings"
-  };
-
+  const tabMap = { "tab-main": "content-main", "tab-about": "content-about", "tab-settings": "content-settings" };
   Object.entries(tabMap).forEach(([tabId, contentId]) => {
     const tabButton = document.getElementById(tabId);
     tabButton.onclick = async () => {
-      Object.keys(tabMap).forEach(id => {
-        const btn = document.getElementById(id);
-        if (btn) { btn.className = "chat-list-header__tab___okUFS"; }
-      });
-      Object.values(tabMap).forEach(id => {
-        const content = document.getElementById(id);
-        if (content) content.hidden = true;
-      });
+      Object.keys(tabMap).forEach(id => { const btn = document.getElementById(id); if (btn) { btn.className = "chat-list-header__tab___okUFS"; } });
+      Object.values(tabMap).forEach(id => { const content = document.getElementById(id); if (content) content.hidden = true; });
       const activeContent = document.getElementById(contentId);
       if (activeContent) activeContent.hidden = false;
       tabButton.className = "chat-list-header__tab___okUFS chat-list-header__tab--active___cVDea";
@@ -561,13 +542,11 @@ async function createChatPanel() {
       if (storeKey === "open_attack_new_tab") { openAttackNewTab = el.checked; }
     });
   }
-
   const attackExecuteInput = document.getElementById("attack-execute");
   attackExecuteInput.value = await GM.getValue("attack_execute", "60");
   attackExecuteInput.addEventListener("change", () => {
     GM.setValue("attack_execute", attackExecuteInput.value);
   });
-
   await updateMainTabSummary();
   setInterval(updateMainTabSummary, 30000);
   setupCollapsibleSections();
@@ -579,7 +558,6 @@ async function createChatPanel() {
   updateSettingsAPIStatus();
   setInterval(updatePersistentBanner, 30000);
   setInterval(updateSettingsAPIStatus, 30000);
-
   const minimizeAttack = JSON.parse(await GM.getValue("minimize_on_attack", "false"));
   if (minimizeAttack && window.location.href.startsWith("https://www.torn.com/loader.php?sid=attack")) {
     wrapper.hidden = true;
@@ -658,9 +636,7 @@ async function enableQuickAttackAndHiding() {
       if (settings.quick) {
         wrapper.addEventListener("click", async () => {
           const startBtn = document.querySelector("#react-root button.torn-btn[type='submit']");
-          if (startBtn) {
-            startBtn.click();
-          }
+          if (startBtn) startBtn.click();
           setTimeout(async () => {
             try {
               const postFightContainer = await waitForElm("div.dialogButtons___nX4Bz");
@@ -711,6 +687,7 @@ setInterval(executeAttackNotifier, 5000);
 updateWarModeStatusPersist();
 setInterval(updateWarModeStatusPersist, PING_INTERVAL);
 
+// Override profile-button-attack
 function waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector) {
   const targetNodes = document.querySelectorAll(selector);
   if (targetNodes && targetNodes.length > 0) {
@@ -724,7 +701,6 @@ function waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector)
   }
   setTimeout(function() { waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector); }, 300);
 }
-
 waitForKeyElements("a.profile-button-attack", function(node) {
   node.removeAttribute("onclick");
   node.onclick = function(e) {
@@ -735,16 +711,42 @@ waitForKeyElements("a.profile-button-attack", function(node) {
     return false;
   };
 }, false);
-
 function openAttack(url) {
   console.log("openAttackNewTab =", openAttackNewTab, "URL =", url);
-  if (openAttackNewTab) {
-    GM.openInTab(url, { active: true });
-  } else {
-    window.location.href = url;
-  }
+  if (openAttackNewTab) { GM.openInTab(url, { active: true }); } else { window.location.href = url; }
 }
 
+// --- Attack Page Reporting System ---
+function reportAttackPresence() {
+  let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
+  if (!targetID) return;
+  GM.xmlHttpRequest({
+    method: "POST",
+    url: "http://46.202.179.156:8081/reportAttack",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify({ user2ID: targetID, action: "enter" }),
+    onload: (res) => { console.log("Attack presence reported:", res.responseText); },
+    onerror: (err) => { console.error("Error reporting attack presence:", err); }
+  });
+}
+function reportAttackExit() {
+  let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
+  if (!targetID) return;
+  GM.xmlHttpRequest({
+    method: "POST",
+    url: "http://46.202.179.156:8081/reportAttack",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify({ user2ID: targetID, action: "exit" }),
+    onload: (res) => { console.log("Attack exit reported:", res.responseText); },
+    onerror: (err) => { console.error("Error reporting attack exit:", err); }
+  });
+}
+if (window.location.href.includes("loader.php?sid=attack")) {
+  reportAttackPresence();
+  window.addEventListener("beforeunload", reportAttackExit);
+}
+
+// --- Reactive Attack Countdown ---
 let reactiveCountdownInterval = null;
 async function startReactiveCountdown() {
   const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
@@ -752,16 +754,11 @@ async function startReactiveCountdown() {
   const apiKey = await GM.getValue("api_key", "");
   if (!apiKey) return;
   let targetID = window.attackData?.DB?.defenderUser?.userID;
-  if (!targetID) {
-    const urlParams = new URLSearchParams(window.location.search);
-    targetID = urlParams.get("user2ID");
-  }
+  if (!targetID) { const urlParams = new URLSearchParams(window.location.search); targetID = urlParams.get("user2ID"); }
   if (!targetID) return;
   const btn = await waitForElm(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
   if (!btn) return;
-
   btn.style.minWidth = "175px";
-
   try {
     const response = await fetch(`https://api.torn.com/user/${targetID}?selections=profile&key=${apiKey}`, {
       credentials: "same-origin"
@@ -801,7 +798,6 @@ async function startReactiveCountdown() {
     btn.textContent = "Start Fight (API error)";
   }
 }
-
 if (window.location.href.includes("loader.php?sid=attack")) {
   GM.getValue("reactive_attack_enabled", false).then(enabled => {
     if (!enabled) return;
