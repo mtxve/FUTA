@@ -1,15 +1,18 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.4.7
+// @version      0.5.7
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
 // @match        https://www.torn.com/*
+// @grant        GM_addStyle
 // @grant        GM.getValue
 // @grant        GM.setValue
+// @grant        unsafeWindow
 // @grant        GM.xmlHttpRequest
 // @grant        GM.openInTab
+// @run-at       document-start
 // @connect      46.202.179.156
 // @connect      api.torn.com
 // ==/UserScript==
@@ -17,26 +20,30 @@
 (function addCustomStyles(){
   const style = document.createElement("style");
   style.textContent = `
-    /* Dark mode styles */
     body.dark-mode .active-tab { background-color: #333 !important; color: #fff !important; }
     body.dark-mode .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #222 !important; padding: 6px; border: 1px solid #444 !important; color: #fff !important; }
     body.dark-mode .collapsible-content { padding: 8px; border: 1px solid #444 !important; border-top: none !important; background: #2a2a2a !important; color: #fff !important; }
-    body.dark-mode input[type="text"] { background: #333 !important; color: #fff !important; border: 1px solid #444 !important; }
     body.dark-mode .chat-list-header__tab___okUFS p { color: #fff !important; }
-    /* Light mode styles */
     body:not(.dark-mode) .active-tab { background-color: #eee !important; color: #000 !important; }
     body:not(.dark-mode) .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #f0f0f0 !important; padding: 6px; border: 1px solid #ccc !important; color: #000 !important; }
     body:not(.dark-mode) .collapsible-content { padding: 8px; border: 1px solid #ccc !important; border-top: none !important; background: #fff !important; color: #000 !important; }
-    body:not(.dark-mode) input[type="text"] { background: #fff !important; color: #000 !important; border: 1px solid #ccc !important; }
     body:not(.dark-mode) .chat-list-header__tab___okUFS p { color: #000 !important; }
-    /* Buttons container */
     #main-buttons, #extra-buttons { display: flex; gap: 20px; margin-top: 10px; }
-    /* Mimic People header sizing for Charlemagne */
     #charlemagne-header { padding-top: 3px; padding-bottom: 3px; }
-    /* Persistent Banner */
     #persistent-banner { font-size: 12px; text-align: center; padding: 5px 0; border-top: 1px solid currentColor; }
-    /* Settings API Status */
     #settings-api-status { margin-top: 10px; text-align: center; font-size: 12px; }
+    body.dark-mode #bust-panel { background-color: #2a2a2a !important; color: #fff !important; border: 1px solid #444 !important; }
+    body.dark-mode #bust-panel input[type="text"],
+    body.dark-mode #bust-panel input[type="number"],
+    body.dark-mode #bust-panel select,
+    body.dark-mode #bust-panel .collapsible-header { background: #222 !important; border-color: #444 !important; color: #fff !important; }
+    body.dark-mode #bust-panel .collapsible-content { background: #2a2a2a !important; border-color: #444 !important; color: #fff !important; }
+    body:not(.dark-mode) #bust-panel { background-color: #f7f7f7 !important; color: #000 !important; border: 1px solid #ccc !important; }
+    body:not(.dark-mode) #bust-panel input[type="text"],
+    body:not(.dark-mode) #bust-panel input[type="number"],
+    body:not(.dark-mode) #bust-panel select,
+    body:not(.dark-mode) #bust-panel .collapsible-header { background: #f0f0f0 !important; border-color: #ccc !important; color: #000 !important; }
+    body:not(.dark-mode) #bust-panel .collapsible-content { background: #fff !important; border-color: #ccc !important; color: #000 !important; }
   `;
   document.head.appendChild(style);
 })();
@@ -46,11 +53,54 @@ const panelId = "bust-panel";
 const pingURL = "http://46.202.179.156:8081/ping";
 const tabStateKey = "charlemagne_last_tab";
 const PING_INTERVAL = 30000;
-const VERSION = "0.4.7";
+const VERSION = "0.5.7";
 let currentWarMode = await GM.getValue("currentWarMode", "Peace");
 let pingPromise = null;
 let tornApiStatus = "Connecting...";
 let openAttackNewTab = JSON.parse(await GM.getValue("open_attack_new_tab", "false"));
+
+(function interceptAttackFetch() {
+  const { fetch: originalFetch } = unsafeWindow;
+  unsafeWindow.fetch = async (...args) => {
+    const [resource, config] = args;
+    const response = await originalFetch(resource, config);
+    const cloneJson = async () => {
+      let data = await response.clone().json();
+      if (response.url.includes('?sid=attackData')) {
+        const error = data?.DB?.error || '';
+        if (
+          error.includes('in hospital') ||
+          error.includes('unconscious') ||
+          error.includes('This fight no longer exists')
+        ) {
+          if (data?.DB?.defenderUser?.playername && !data.DB.defenderUser.playername.includes('[Hospital]')) {
+            data.DB.defenderUser.playername += ' [Hospital]';
+          }
+          delete data.DB.error;
+          delete data.startErrorTitle;
+        }
+      }
+      return data;
+    };
+    response.json = cloneJson;
+    response.text = async () => JSON.stringify(await cloneJson());
+    return response;
+  };
+})();
+
+function waitForElm(selector) {
+  return new Promise(resolve => {
+    if (document.querySelector(selector)) return resolve(document.querySelector(selector));
+    const observer = new MutationObserver(() => {
+      const found = document.querySelector(selector);
+      if (found) {
+        observer.disconnect();
+        resolve(found);
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  });
+}
 
 async function getPingData() {
   const now = Date.now();
@@ -106,10 +156,12 @@ async function updatePersistentBanner() {
     if (charlStatus !== "Established" || tornApiStatus !== "Established") {
       bannerEl.innerHTML = `
         Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-        Connection to TornAPI: <strong style="color: ${tornColor};">${tornApiStatus}</strong>
+        Connection to TornAPI: <strong style="color: ${tornColor};">${tornColor}</strong>
       `;
       bannerEl.style.display = "block";
-    } else { bannerEl.style.display = "none"; }
+    } else {
+      bannerEl.style.display = "none";
+    }
   }
 }
 
@@ -121,7 +173,7 @@ async function updateSettingsAPIStatus() {
   const tornColor = (tornApiStatus === "Established") ? "green" : "red";
   const statusHTML = `
     Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-    Connection to TornAPI: <strong style="color: ${tornColor};">${tornApiStatus}</strong><br/>
+    Connection to TornAPI: <strong style="color: ${tornColor};">${tornColor}</strong><br/>
     Version: ${VERSION}<br/>
     Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank">Asemov</a>
   `;
@@ -158,11 +210,9 @@ async function fetchCheckSummary() {
             const cd = data.cooldowns || {};
             const icons = data.icons || {};
             const missions = data.missions || {};
-
             if (!refills.energy_refill_used || !refills.nerve_refill_used) {
               output.push(`You haven't used your ${!refills.energy_refill_used ? "energy" : ""}${(!refills.energy_refill_used && !refills.nerve_refill_used) ? " & " : ""}${!refills.nerve_refill_used ? "nerve" : ""} refill today.`);
             }
-
             if (!ignores.ignore_drug && cd.drug === 0) { output.push("You're not currently on any drugs."); }
             if (!ignores.ignore_booster && cd.booster === 0) { output.push("You're not using your booster cooldown."); }
             if (!ignores.ignore_medical && cd.medical === 0) { output.push("You're not using your medical cooldown."); }
@@ -171,7 +221,6 @@ async function fetchCheckSummary() {
               else if (icons && icons.icon17) { output.push("You're currently racing."); }
               else { output.push("You're not currently racing or traveling."); }
             }
-
             let missionArray = [];
             if (missions && typeof missions === "object") {
               for (let key in missions) {
@@ -354,15 +403,20 @@ async function createChatPanel() {
           <div class="collapsible">
             <div class="collapsible-header">Attack Settings:</div>
             <div class="collapsible-content">
-              <!-- Moved toggles: Quick Attack comes first, then Open attack in new tab, etc. -->
-              <label><input type="checkbox" id="quick-attack-toggle"> Quick Attack</label><br/>
+              <label><input type="checkbox" id="quick-attack-toggle"> Quick Attack</label>
+              <select id="quick-attack-action">
+                <option value="leave">Leave</option>
+                <option value="hospital">Hosp</option>
+                <option value="mug">Mug</option>
+              </select><br/>
+              <label><input type="checkbox" id="reactive-attack-toggle"> Reactive Attack</label><br/>
               <label><input type="checkbox" id="open-attack-new-tab"> Open attack in new tab</label><br/>
               <label><input type="checkbox" id="minimize-on-attack"> Minimize on attack page</label><br/>
               <label><input type="checkbox" id="hide-primary"> Hide Primary</label><br/>
               <label><input type="checkbox" id="hide-secondary"> Hide Secondary</label><br/>
               <label><input type="checkbox" id="hide-melee"> Hide Melee</label><br/>
               <label><input type="checkbox" id="hide-temp"> Hide Temp</label><br/>
-              <label>Execute: <input type="number" id="attack-execute" style="width:50px;" min="0" max="99" value="60"></label><br/>
+              <label>Execute: <input type="number" id="attack-execute" style="width:30px;" min="0" max="99" value="15"></label><br/>
             </div>
           </div>
           <div class="collapsible">
@@ -384,6 +438,14 @@ async function createChatPanel() {
     </div>`;
   chatGroup.after(wrapper);
 
+  const quickAttackActionSelect = document.getElementById("quick-attack-action");
+  if (quickAttackActionSelect) {
+    quickAttackActionSelect.value = await GM.getValue("quick_attack_action", "leave");
+    quickAttackActionSelect.addEventListener("change", () => {
+      GM.setValue("quick_attack_action", quickAttackActionSelect.value);
+    });
+  }
+
   if (!savedKey) {
     document.getElementById("request-bust").disabled = true;
     document.getElementById("request-revive").disabled = true;
@@ -393,45 +455,43 @@ async function createChatPanel() {
   }
 
   const tabMap = {
-  "tab-main": "content-main",
-  "tab-about": "content-about",
-  "tab-settings": "content-settings"
-};
-
-Object.entries(tabMap).forEach(([tabId, contentId]) => {
-  const tabButton = document.getElementById(tabId);
-  tabButton.onclick = async () => {
-    Object.keys(tabMap).forEach(id => {
-      const btn = document.getElementById(id);
-      if (btn) {
-        btn.className = "chat-list-header__tab___okUFS";
-      }
-    });
-    Object.values(tabMap).forEach(id => {
-      const content = document.getElementById(id);
-      if (content) content.hidden = true;
-    });
-    const activeContent = document.getElementById(contentId);
-    if (activeContent) activeContent.hidden = false;
-    tabButton.className = "chat-list-header__tab___okUFS chat-list-header__tab--active___cVDea";
-    await GM.setValue(tabStateKey, contentId);
+    "tab-main": "content-main",
+    "tab-about": "content-about",
+    "tab-settings": "content-settings"
   };
-});
-(async function persistActiveTab() {
-  const activeContent = await GM.getValue(tabStateKey, "content-main");
+
   Object.entries(tabMap).forEach(([tabId, contentId]) => {
     const tabButton = document.getElementById(tabId);
-    if (tabButton) {
-      if (contentId === activeContent) {
-        tabButton.className = "chat-list-header__tab___okUFS chat-list-header__tab--active___cVDea";
-        document.getElementById(contentId).hidden = false;
-      } else {
-        tabButton.className = "chat-list-header__tab___okUFS";
-        document.getElementById(contentId).hidden = true;
-      }
-    }
+    tabButton.onclick = async () => {
+      Object.keys(tabMap).forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) { btn.className = "chat-list-header__tab___okUFS"; }
+      });
+      Object.values(tabMap).forEach(id => {
+        const content = document.getElementById(id);
+        if (content) content.hidden = true;
+      });
+      const activeContent = document.getElementById(contentId);
+      if (activeContent) activeContent.hidden = false;
+      tabButton.className = "chat-list-header__tab___okUFS chat-list-header__tab--active___cVDea";
+      await GM.setValue(tabStateKey, contentId);
+    };
   });
-})();
+  (async function persistActiveTab() {
+    const activeContent = await GM.getValue(tabStateKey, "content-main");
+    Object.entries(tabMap).forEach(([tabId, contentId]) => {
+      const tabButton = document.getElementById(tabId);
+      if (tabButton) {
+        if (contentId === activeContent) {
+          tabButton.className = "chat-list-header__tab___okUFS chat-list-header__tab--active___cVDea";
+          document.getElementById(contentId).hidden = false;
+        } else {
+          tabButton.className = "chat-list-header__tab___okUFS";
+          document.getElementById(contentId).hidden = true;
+        }
+      }
+    });
+  })();
   if (document.getElementById(lastTab)) {
     document.getElementById(lastTab).hidden = false;
     const activeTab = Object.keys(tabMap).find(key => tabMap[key] === lastTab);
@@ -475,6 +535,7 @@ Object.entries(tabMap).forEach(([tabId, contentId]) => {
   };
 
   const toggleSettings = [
+    ["reactive-attack-toggle", "reactive_attack_enabled"],
     ["quick-attack-toggle", "quick_attack_enabled"],
     ["open-attack-new-tab", "open_attack_new_tab"],
     ["minimize-on-attack", "minimize_on_attack"],
@@ -493,9 +554,7 @@ Object.entries(tabMap).forEach(([tabId, contentId]) => {
     el.checked = await GM.getValue(storeKey, false);
     el.addEventListener("change", () => {
       GM.setValue(storeKey, el.checked);
-      if (storeKey === "open_attack_new_tab") {
-        openAttackNewTab = el.checked;
-      }
+      if (storeKey === "open_attack_new_tab") { openAttackNewTab = el.checked; }
     });
   }
 
@@ -521,8 +580,6 @@ Object.entries(tabMap).forEach(([tabId, contentId]) => {
   if (minimizeAttack && window.location.href.startsWith("https://www.torn.com/loader.php?sid=attack")) {
     wrapper.hidden = true;
   }
-
-  // Persist active tab styling on panel creation.
   (async function persistActiveTab() {
     const activeContent = await GM.getValue(tabStateKey, "content-main");
     const tabMap = { "tab-main": "content-main", "tab-about": "content-about", "tab-settings": "content-settings" };
@@ -595,9 +652,34 @@ async function enableQuickAttackAndHiding() {
         img.parentNode.appendChild(label);
       }
       if (settings.quick) {
-        wrapper.addEventListener("click", () => {
+        wrapper.addEventListener("click", async () => {
           const startBtn = document.querySelector("#react-root button.torn-btn[type='submit']");
-          if (startBtn) startBtn.click();
+          if (startBtn) {
+            startBtn.click();
+          }
+          setTimeout(async () => {
+            try {
+              const postFightContainer = await waitForElm("div.dialogButtons___nX4Bz");
+              const action = document.getElementById("quick-attack-action")?.value || "leave";
+              const buttons = postFightContainer.querySelectorAll("button.torn-btn");
+              let targetButton = null;
+              Array.from(buttons).forEach(btn => {
+                const txt = btn.innerText.toLowerCase();
+                if (action === "leave" && txt.includes("leave")) {
+                  targetButton = btn;
+                } else if (action === "hospital" && (txt.includes("hospital") || txt.includes("hosp"))) {
+                  targetButton = btn;
+                } else if (action === "mug" && txt.includes("mug")) {
+                  targetButton = btn;
+                }
+              });
+              if (targetButton) {
+                targetButton.style.boxShadow = "0 0 5px 2px red";
+              }
+            } catch (e) {
+              console.error("Post-fight dialog not found for Quick Attack:", e);
+            }
+          }, 1500);
         });
       }
     });
@@ -620,11 +702,12 @@ async function executeAttackNotifier() {
 }
 
 createChatButton();
-enableQuickAttackAndHiding();
+waitForElm("body").then(() => enableQuickAttackAndHiding());
 setInterval(executeAttackNotifier, 5000);
 updateWarModeStatusPersist();
 setInterval(updateWarModeStatusPersist, PING_INTERVAL);
 
+// --- Wait for profile-button-attack and override its onclick ---
 function waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector) {
   const targetNodes = document.querySelectorAll(selector);
   if (targetNodes && targetNodes.length > 0) {
@@ -636,9 +719,7 @@ function waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector)
     });
     if (bWaitOnce) return;
   }
-  setTimeout(function() {
-    waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector);
-  }, 300);
+  setTimeout(function() { waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector); }, 300);
 }
 
 waitForKeyElements("a.profile-button-attack", function(node) {
@@ -659,4 +740,69 @@ function openAttack(url) {
   } else {
     window.location.href = url;
   }
+}
+
+let reactiveCountdownInterval = null;
+async function startReactiveCountdown() {
+  const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
+  if (!reactiveEnabled) return;
+  const apiKey = await GM.getValue("api_key", "");
+  if (!apiKey) return;
+  let targetID = window.attackData?.DB?.defenderUser?.userID;
+  if (!targetID) {
+    const urlParams = new URLSearchParams(window.location.search);
+    targetID = urlParams.get("user2ID");
+  }
+  if (!targetID) return;
+  const btn = await waitForElm(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+  if (!btn) return;
+
+  btn.style.minWidth = "175px";
+
+  try {
+    const response = await fetch(`https://api.torn.com/user/${targetID}?selections=profile&key=${apiKey}`, {
+      credentials: "same-origin"
+    });
+    const data = await response.json();
+    if (data?.status?.state === "Hospital") {
+      btn.disabled = true;
+      btn.classList.add("disabled");
+      const until = data.status.until;
+      if (reactiveCountdownInterval) clearInterval(reactiveCountdownInterval);
+      const update = () => {
+        const now = Math.floor(Date.now() / 1000);
+        const remaining = until - now;
+        if (remaining > 0) {
+          const mins = Math.floor(remaining / 60);
+          const secs = remaining % 60;
+          btn.textContent = `Start Fight (${mins}m ${secs}s)`;
+        } else {
+          clearInterval(reactiveCountdownInterval);
+          reactiveCountdownInterval = null;
+          btn.disabled = false;
+          btn.classList.remove("disabled");
+          btn.textContent = "Start Fight";
+        }
+      };
+      update();
+      reactiveCountdownInterval = setInterval(update, 1000);
+    } else {
+      if (reactiveCountdownInterval) clearInterval(reactiveCountdownInterval);
+      reactiveCountdownInterval = null;
+      btn.disabled = false;
+      btn.classList.remove("disabled");
+      btn.textContent = "Start Fight";
+    }
+  } catch (err) {
+    console.error("Error in reactive countdown fetch:", err);
+    btn.textContent = "Start Fight (API error)";
+  }
+}
+
+if (window.location.href.includes("loader.php?sid=attack")) {
+  GM.getValue("reactive_attack_enabled", false).then(enabled => {
+    if (!enabled) return;
+    startReactiveCountdown();
+    setInterval(startReactiveCountdown, 30000);
+  });
 }
