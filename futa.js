@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.6.732a
+// @version      0.6.73a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -53,7 +53,7 @@ const panelId = "bust-panel";
 const pingURL = "http://46.202.179.156:8081/ping";
 const tabStateKey = "charlemagne_last_tab";
 const PING_INTERVAL = 30000;
-const VERSION = "0.6.732a";
+const VERSION = "0.6.73a";
 let currentWarMode;
 (async () => {
   currentWarMode = await GM.getValue("currentWarMode", "Peace");
@@ -720,34 +720,34 @@ function openAttack(url) {
 }
 
 // --- Attack Page Reporting System ---
-//function reportAttackPresence() {
-//  let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
-//  if (!targetID) return;
-//  GM.xmlHttpRequest({
-//    method: "POST",
-//    url: "http://46.202.179.156:8081/reportAttack",
-//    headers: { "Content-Type": "application/json" },
-//    data: JSON.stringify({ user2ID: targetID, action: "enter" }),
-//    onload: (res) => { console.log("Attack presence reported:", res.responseText); },
-//    onerror: (err) => { console.error("Error reporting attack presence:", err); }
-//  });
-//}
-//function reportAttackExit() {
-//  let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
-//  if (!targetID) return;
-//  GM.xmlHttpRequest({
-//    method: "POST",
-//    url: "http://46.202.179.156:8081/reportAttack",
-//    headers: { "Content-Type": "application/json" },
-//    data: JSON.stringify({ user2ID: targetID, action: "exit" }),
-//    onload: (res) => { console.log("Attack exit reported:", res.responseText); },
-//    onerror: (err) => { console.error("Error reporting attack exit:", err); }
-//  });
-//}
-//if (window.location.href.includes("loader.php?sid=attack")) {
-//  reportAttackPresence();
-//  window.addEventListener("beforeunload", reportAttackExit);
-//}
+function reportAttackPresence() {
+  let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
+  if (!targetID) return;
+  GM.xmlHttpRequest({
+    method: "POST",
+    url: "http://46.202.179.156:8081/reportAttack",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify({ user2ID: targetID, action: "enter" }),
+    onload: (res) => { console.log("Attack presence reported:", res.responseText); },
+    onerror: (err) => { console.error("Error reporting attack presence:", err); }
+  });
+}
+function reportAttackExit() {
+  let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
+  if (!targetID) return;
+  GM.xmlHttpRequest({
+    method: "POST",
+    url: "http://46.202.179.156:8081/reportAttack",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify({ user2ID: targetID, action: "exit" }),
+    onload: (res) => { console.log("Attack exit reported:", res.responseText); },
+    onerror: (err) => { console.error("Error reporting attack exit:", err); }
+  });
+}
+if (window.location.href.includes("loader.php?sid=attack")) {
+  reportAttackPresence();
+  window.addEventListener("beforeunload", reportAttackExit);
+}
 
 // --- Reactive Attack Countdown ---
 let reactiveCountdownInterval = null;
