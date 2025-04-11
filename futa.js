@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.5.7
+// @version      0.5.71a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -53,7 +53,7 @@ const panelId = "bust-panel";
 const pingURL = "http://46.202.179.156:8081/ping";
 const tabStateKey = "charlemagne_last_tab";
 const PING_INTERVAL = 30000;
-const VERSION = "0.5.7";
+const VERSION = "0.5.71a";
 let currentWarMode = await GM.getValue("currentWarMode", "Peace");
 let pingPromise = null;
 let tornApiStatus = "Connecting...";
@@ -610,9 +610,9 @@ function setupCollapsibleSections() {
 async function togglePanel() {
   const panel = document.getElementById(panelId);
   if (panel) {
-    const nowOpen = panel.hidden;
-    panel.hidden = !nowOpen;
-    await GM.setValue("charlemagne_panel_open", nowOpen);
+    const newState = !panel.hidden;
+    panel.hidden = newState;
+    await GM.setValue("charlemagne_panel_open", newState);
   }
 }
 
