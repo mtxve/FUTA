@@ -709,7 +709,6 @@ setInterval(executeAttackNotifier, 5000);
 updateWarModeStatusPersist();
 setInterval(updateWarModeStatusPersist, PING_INTERVAL);
 
-// --- Wait for profile-button-attack and override its onclick ---
 function waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector) {
   const targetNodes = document.querySelectorAll(selector);
   if (targetNodes && targetNodes.length > 0) {
