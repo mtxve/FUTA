@@ -592,9 +592,9 @@ function setupCollapsibleSections() {
 async function togglePanel() {
   const panel = document.getElementById(panelId);
   if (panel) {
-    const newState = !panel.hidden;
-    panel.hidden = newState;
-    await GM.setValue("charlemagne_panel_open", newState);
+    const shouldBeOpen = panel.hidden;
+    panel.hidden = !shouldBeOpen;
+    await GM.setValue("charlemagne_panel_open", !panel.hidden);
   }
 }
 
