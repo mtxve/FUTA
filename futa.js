@@ -866,10 +866,8 @@ async function reportAttackExit() {
   });
 }
 
-// Call reportAttackPresence when the attack page loads
 if (window.location.href.includes("loader.php?sid=attack")) {
   reportAttackPresence();
-  // Call reportAttackExit when leaving the page.
   window.addEventListener("beforeunload", reportAttackExit);
 }
 
