@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.6.74a
+// @version      0.6.75a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -81,7 +81,7 @@
         const pingURL = "http://46.202.179.156:8081/ping";
         const tabStateKey = "charlemagne_last_tab";
         const PING_INTERVAL = 30000;
-        const VERSION = "0.6.74a";
+        const VERSION = "0.6.75a";
 
         let currentWarMode = "Peace";
         let tornApiStatus = "Connecting...";
@@ -679,7 +679,8 @@
     await GM.setValue("charlemagne_panel_open", newState);
   }
 }
-        function getWeaponType(markerId) {
+
+          function getWeaponType(markerId) {
           if (markerId.includes("Primary")) return "primary";
           if (markerId.includes("Secondary")) return "secondary";
           if (markerId.includes("Melee")) return "melee";
@@ -801,34 +802,76 @@
           if (openAttackNewTab) { GM.openInTab(url, { active: true }); } else { window.location.href = url; }
         }
 
-        function reportAttackPresence() {
-          let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
-          if (!targetID) return;
-          GM.xmlHttpRequest({
-            method: "POST",
-            url: "http://46.202.179.156:8081/reportAttack",
-            headers: { "Content-Type": "application/json" },
-            data: JSON.stringify({ user2ID: targetID, action: "enter" }),
-            onload: (res) => { console.log("Attack presence reported:", res.responseText); },
-            onerror: (err) => { console.error("Error reporting attack presence:", err); }
-          });
-        }
-        function reportAttackExit() {
-          let targetID = new URLSearchParams(window.location.search).get("user2ID") || window.attackData?.DB?.defenderUser?.userID;
-          if (!targetID) return;
-          GM.xmlHttpRequest({
-            method: "POST",
-            url: "http://46.202.179.156:8081/reportAttack",
-            headers: { "Content-Type": "application/json" },
-            data: JSON.stringify({ user2ID: targetID, action: "exit" }),
-            onload: (res) => { console.log("Attack exit reported:", res.responseText); },
-            onerror: (err) => { console.error("Error reporting attack exit:", err); }
-          });
-        }
-        if (window.location.href.includes("loader.php?sid=attack")) {
-          reportAttackPresence();
-          window.addEventListener("beforeunload", reportAttackExit);
-        }
+async function reportAttackPresence() {
+  const apiKey = await GM.getValue("api_key", "");
+  if (!apiKey) {
+    console.warn("API key not set – cannot report attack presence.");
+    return;
+  }
+  const targetID = new URLSearchParams(window.location.search).get("user2ID") ||
+                   window.attackData?.DB?.defenderUser?.userID;
+  if (!targetID) {
+    console.warn("No target ID found.");
+    return;
+  }
+  const payload = {
+    user2ID: targetID,
+    action: "enter",
+    api_key: apiKey
+  };
+  console.log("[reportAttackPresence] Sending payload:", payload);
+  GM.xmlHttpRequest({
+    method: "POST",
+    url: "http://46.202.179.156:8081/reportAttack",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify(payload),
+    onload: (res) => {
+      console.log("Attack presence reported:", res.responseText);
+    },
+    onerror: (err) => {
+      console.error("Error reporting attack presence:", err);
+    }
+  });
+}
+
+async function reportAttackExit() {
+  const apiKey = await GM.getValue("api_key", "");
+  if (!apiKey) {
+    console.warn("API key not set – cannot report attack exit.");
+    return;
+  }
+  const targetID = new URLSearchParams(window.location.search).get("user2ID") ||
+                   window.attackData?.DB?.defenderUser?.userID;
+  if (!targetID) {
+    console.warn("No target ID found.");
+    return;
+  }
+  const payload = {
+    user2ID: targetID,
+    action: "exit",
+    api_key: apiKey
+  };
+  console.log("[reportAttackExit] Sending payload:", payload);
+  GM.xmlHttpRequest({
+    method: "POST",
+    url: "http://46.202.179.156:8081/reportAttack",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify(payload),
+    onload: (res) => {
+      console.log("Attack exit reported:", res.responseText);
+    },
+    onerror: (err) => {
+      console.error("Error reporting attack exit:", err);
+    }
+  });
+}
+
+// Call reportAttackPresence when the attack page loads
+if (window.location.href.includes("loader.php?sid=attack")) {
+  reportAttackPresence();
+  // Call reportAttackExit when leaving the page.
+  window.addEventListener("beforeunload", reportAttackExit);
+}
 
         let reactiveCountdownInterval = null;
         async function startReactiveCountdown() {
