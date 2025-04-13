@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.6.75a
+// @version      0.6.76a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -71,7 +71,6 @@
   }
 
   function main() {
-    // First, load the current debug setting.
     GM.getValue("debug_mode", false).then(function(val) {
       debugEnabled = val;
       debugLog("[FUTA] Started with debugging: " + val);
@@ -81,7 +80,7 @@
         const pingURL = "http://46.202.179.156:8081/ping";
         const tabStateKey = "charlemagne_last_tab";
         const PING_INTERVAL = 30000;
-        const VERSION = "0.6.75a";
+        const VERSION = "0.6.76a";
 
         let currentWarMode = "Peace";
         let tornApiStatus = "Connecting...";
@@ -802,74 +801,55 @@
           if (openAttackNewTab) { GM.openInTab(url, { active: true }); } else { window.location.href = url; }
         }
 
-async function reportAttackPresence() {
+(function heartbeat() {
+  const ATTACK_PING_INTERVAL = 15000;
+  const HEARTBEAT_KEY = 'attack_session_id';
+
+  function getOrCreateSessionID() {
+    let sessionID = sessionStorage.getItem(HEARTBEAT_KEY);
+    if (!sessionID) {
+      sessionID = '_' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem(HEARTBEAT_KEY, sessionID);
+    }
+    return sessionID;
+  }
+
+  async function sendHeartbeat() {
   const apiKey = await GM.getValue("api_key", "");
-  if (!apiKey) {
-    console.warn("API key not set – cannot report attack presence.");
-    return;
-  }
+  if (!apiKey) return;
+
   const targetID = new URLSearchParams(window.location.search).get("user2ID") ||
-                   window.attackData?.DB?.defenderUser?.userID;
-  if (!targetID) {
-    console.warn("No target ID found.");
-    return;
-  }
+                   (window.attackData && window.attackData.DB && window.attackData.DB.defenderUser && window.attackData.DB.defenderUser.userID);
+  if (!targetID) return;
+
+  const sessionID = getOrCreateSessionID();
+
   const payload = {
     user2ID: targetID,
-    action: "enter",
+    action: "heartbeat",
+    sessionID: sessionID,
     api_key: apiKey
   };
-  console.log("[reportAttackPresence] Sending payload:", payload);
+
   GM.xmlHttpRequest({
     method: "POST",
     url: "http://46.202.179.156:8081/reportAttack",
     headers: { "Content-Type": "application/json" },
     data: JSON.stringify(payload),
-    onload: (res) => {
-      console.log("Attack presence reported:", res.responseText);
-    },
-    onerror: (err) => {
-      console.error("Error reporting attack presence:", err);
-    }
+    onload: (res) => console.log("[FUTA] Heartbeat sent via GM.xmlHttpRequest:", res.responseText),
+    onerror: (err) => console.error("[FUTA] Error sending heartbeat via GM.xmlHttpRequest:", err)
   });
 }
+  const isAttackPage = window.location.href.includes("loader.php?sid=attack") ||
+                       window.location.href.includes("tornpda.com/attack");
 
-async function reportAttackExit() {
-  const apiKey = await GM.getValue("api_key", "");
-  if (!apiKey) {
-    console.warn("API key not set – cannot report attack exit.");
-    return;
+  if (isAttackPage) {
+    sendHeartbeat();
+    setInterval(sendHeartbeat, ATTACK_PING_INTERVAL);
+    window.addEventListener("pagehide", () => {
+    });
   }
-  const targetID = new URLSearchParams(window.location.search).get("user2ID") ||
-                   window.attackData?.DB?.defenderUser?.userID;
-  if (!targetID) {
-    console.warn("No target ID found.");
-    return;
-  }
-  const payload = {
-    user2ID: targetID,
-    action: "exit",
-    api_key: apiKey
-  };
-  console.log("[reportAttackExit] Sending payload:", payload);
-  GM.xmlHttpRequest({
-    method: "POST",
-    url: "http://46.202.179.156:8081/reportAttack",
-    headers: { "Content-Type": "application/json" },
-    data: JSON.stringify(payload),
-    onload: (res) => {
-      console.log("Attack exit reported:", res.responseText);
-    },
-    onerror: (err) => {
-      console.error("Error reporting attack exit:", err);
-    }
-  });
-}
-
-if (window.location.href.includes("loader.php?sid=attack")) {
-  reportAttackPresence();
-  window.addEventListener("beforeunload", reportAttackExit);
-}
+})();
 
         let reactiveCountdownInterval = null;
         async function startReactiveCountdown() {
