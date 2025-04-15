@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.6.76a
+// @version      0.6.77a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -80,7 +80,7 @@
         const pingURL = "http://46.202.179.156:8081/ping";
         const tabStateKey = "charlemagne_last_tab";
         const PING_INTERVAL = 30000;
-        const VERSION = "0.6.76a";
+        const VERSION = "0.6.77a";
 
         let currentWarMode = "Peace";
         let tornApiStatus = "Connecting...";
@@ -99,11 +99,11 @@
           const style = document.createElement("style");
           style.textContent = `
     body.dark-mode .active-tab { background-color: #333 !important; color: #fff !important; }
-    body.dark-mode .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #222 !important; padding: 6px; border: 1px solid #444 !important; color: #fff !important; }
+    body.dark-mode .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #222 !important; padding: 6px; border: 1px solid #444 !important; color: #fff !important; margin-bottom: 0 !important; }
     body.dark-mode .collapsible-content { padding: 8px; border: 1px solid #444 !important; border-top: none !important; background: #2a2a2a !important; color: #fff !important; }
     body.dark-mode .chat-list-header__tab___okUFS p { color: #fff !important; }
     body:not(.dark-mode) .active-tab { background-color: #eee !important; color: #000 !important; }
-    body:not(.dark-mode) .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #f0f0f0 !important; padding: 6px; border: 1px solid #ccc !important; color: #000 !important; }
+    body:not(.dark-mode) .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #f0f0f0 !important; padding: 6px; border: 1px solid #ccc !important; color: #000 !important; margin-bottom: 0 !important;}
     body:not(.dark-mode) .collapsible-content { padding: 8px; border: 1px solid #ccc !important; border-top: none !important; background: #fff !important; color: #000 !important; }
     body:not(.dark-mode) .chat-list-header__tab___okUFS p { color: #000 !important; }
     #main-buttons, #extra-buttons { display: flex; gap: 20px; margin-top: 10px; }
@@ -114,13 +114,13 @@
     body.dark-mode #bust-panel input[type="text"],
     body.dark-mode #bust-panel input[type="number"],
     body.dark-mode #bust-panel select,
-    body.dark-mode #bust-panel .collapsible-header { background: #222 !important; border-color: #444 !important; color: #fff !important; }
+    body.dark-mode #bust-panel .collapsible-header { background: #222 !important; border-color: #444 !important; color: #fff !important; margin-bottom: 0 !important;}
     body.dark-mode #bust-panel .collapsible-content { background: #2a2a2a !important; border-color: #444 !important; color: #fff !important; }
     body:not(.dark-mode) #bust-panel { background-color: #f7f7f7 !important; color: #000 !important; border: 1px solid #ccc !important; }
     body:not(.dark-mode) #bust-panel input[type="text"],
     body:not(.dark-mode) #bust-panel input[type="number"],
     body:not(.dark-mode) #bust-panel select,
-    body:not(.dark-mode) #bust-panel .collapsible-header { background: #f0f0f0 !important; border-color: #ccc !important; color: #000 !important; }
+    body:not(.dark-mode) #bust-panel .collapsible-header { background: #f0f0f0 !important; border-color: #ccc !important; color: #000 !important; margin-bottom: 0 !important;}
     body:not(.dark-mode) #bust-panel .collapsible-content { background: #fff !important; border-color: #ccc !important; color: #000 !important; }
           `;
           document.head.appendChild(style);
@@ -409,28 +409,50 @@
   chatBtnRef.parentNode.insertBefore(button, chatBtnRef);
   createChatPanel();
 }
-        async function createChatPanel() {
-          const chatGroup = document.querySelector("div[class^='group-chat-box']");
-          if (!chatGroup) return setTimeout(createChatPanel, 500);
-          const savedKey = await GM.getValue("api_key", "");
-          const wasOpen = await GM.getValue("charlemagne_panel_open", false);
-          const lastTab = await GM.getValue(tabStateKey, "content-main");
-          const pingData = await getPingData();
-          const isConnected = Object.keys(pingData).length > 0;
-          const charlStatus = isConnected ? "Established" : "No Connection";
-          const charlColor = isConnected ? "green" : "red";
-          const summary = await fetchCheckSummary();
-          const tornStatus = (summary.indexOf("❌") === 0) ? "No Connection" : "Established";
-          const tornColor = tornStatus === "Established" ? "green" : "red";
-          const persistentBannerHTML = `
-        Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-        Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong>
-      `;
-          const wrapper = document.createElement("div");
-          wrapper.className = "chat-app__panel___wh6nM";
-          wrapper.id = panelId;
-          wrapper.hidden = !wasOpen;
-          wrapper.innerHTML = `
+
+async function createChatPanel() {
+  const chatGroup = document.querySelector("div[class^='group-chat-box']");
+  if (!chatGroup) {
+    return setTimeout(createChatPanel, 500);
+  }
+  const panelId = "bust-panel";
+  const savedKey = await GM.getValue("api_key", "");
+  const wasOpen = await GM.getValue("charlemagne_panel_open", false);
+  const lastTab = await GM.getValue("charlemagne_last_tab", "content-main");
+  let pingData = {};
+  let summary = "No summary available.";
+  let charlStatus = "No Connection";
+  let charlColor = "red";
+  let tornStatus = "No Connection";
+  let tornColor = "red";
+  try {
+    pingData = await getPingData();
+    if (Object.keys(pingData).length > 0) {
+      charlStatus = "Established";
+      charlColor = "green";
+    }
+  } catch (e) {
+    console.warn("[FUTA] Failed to fetch ping data:", e);
+  }
+
+  try {
+    summary = await fetchCheckSummary();
+    if (!summary.startsWith("❌")) {
+      tornStatus = "Established";
+      tornColor = "green";
+    }
+  } catch (e) {
+    console.warn("[FUTA] Failed to fetch Torn summary:", e);
+  }
+  const persistentBannerHTML = `
+    Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
+    Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong>
+  `;
+  const wrapper = document.createElement("div");
+  wrapper.className = "chat-app__panel___wh6nM";
+  wrapper.id = panelId;
+  wrapper.hidden = !wasOpen;
+  wrapper.innerHTML = `
     <div class="chat-tab___gh1rq">
       <div class="chat-list-header__text-action-wrapper___sWKdh" role="button" id="charlemagne-header">
         <div class="chat-list-header__text-wrapper___R6R0A" style="display: flex; align-items: center; gap: 6px; height: 100%;">
@@ -508,7 +530,8 @@
         ${persistentBannerHTML}
       </div>
     </div>`;
-          chatGroup.after(wrapper);
+
+  chatGroup.after(wrapper);
 
           const quickAttackActionSelect = document.getElementById("quick-attack-action");
           if (quickAttackActionSelect) {
