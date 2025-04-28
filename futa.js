@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.02a
+// @version      0.7.03a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -108,7 +108,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.02a",
+    VERSION: "0.7.03a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -438,7 +438,7 @@
         </div>
         <div class="chat-tab-content___jNmk8">
           <div id="content-main" hidden>
-            <div id="check-summary-box" style="margin-top: 2px; font-size:13px; border-radius:4px; white-space:pre-line; border:1px solid #444; background:inherit; color:inherit">
+            <div id="check-summary-box" style="padding: 10px; font-size:13px; border-radius:4px; white-space:pre-line; border:1px solid #444; background:inherit; color:inherit">
               ${cachedSummary}
             </div>
             <div id="action-buttons">
@@ -947,90 +947,103 @@
       return window.location.href.includes("loader.php?sid=attack") && window.location.search.includes("user2ID=");
     };
 
+    const determineFightState = () => {
+      const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+      const inFightUI = document.querySelector(".attackWrapper___p0_It");
+      const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
+
+      if (startBtn && (startBtn.textContent.trim() === "Start Fight" || startBtn.textContent.includes("Start Fight ("))) {
+        fightState = "pre-fight";
+        debugLog("Fight state: pre-fight (Start Fight button found)");
+      } else if (inFightUI) {
+        fightState = "in-fight";
+        debugLog("Fight state: in-fight (attackWrapper found)");
+      } else if (postFightContainer) {
+        const buttons = postFightContainer.querySelectorAll("button.torn-btn");
+        const postFightButtonNames = ["leave", "mug", "hospitalize", "hosp"];
+        let isPostFight = false;
+        const buttonTexts = [];
+        buttons.forEach(btn => {
+          const btnText = btn.innerText.trim();
+          buttonTexts.push(btnText);
+          const btnTextLower = btnText.toLowerCase();
+          if (postFightButtonNames.includes(btnTextLower)) {
+            isPostFight = true;
+          }
+        });
+        debugLog(`Post-fight buttons found: ${buttonTexts.join(", ")}`);
+        if (isPostFight) {
+          fightState = "post-fight";
+          debugLog("Fight state: post-fight (post-fight buttons matched)");
+        } else {
+          fightState = "pre-fight";
+          debugLog("Fight state: pre-fight (post-fight container found but no matching post-fight buttons)");
+        }
+      } else {
+        fightState = "pre-fight";
+        debugLog("Fight state: pre-fight (default state)");
+      }
+      return fightState;
+    };
+
     if (isAttackPage()) {
       debugLog("On attack page, setting up fight state observer...");
       const stateObserver = new MutationObserver(() => {
-        const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-        const inFightUI = document.querySelector(".attackWrapper___p0_It");
-        const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
-
-        if (startBtn && (startBtn.textContent.trim() === "Start Fight" || startBtn.textContent.includes("Start Fight ("))) {
-          fightState = "pre-fight";
-          debugLog("Fight state: pre-fight (Start Fight button found)");
-        }
-        else if (inFightUI) {
-          fightState = "in-fight";
-          debugLog("Fight state: in-fight (attackWrapper found)");
-        }
-        else if (postFightContainer) {
-          const buttons = postFightContainer.querySelectorAll("button.torn-btn");
-          const postFightButtonNames = ["leave", "mug", "hospitalize", "hosp"];
-          let isPostFight = false;
-          const buttonTexts = [];
-          buttons.forEach(btn => {
-            const btnText = btn.innerText.trim();
-            buttonTexts.push(btnText);
-            const btnTextLower = btnText.toLowerCase();
-            if (postFightButtonNames.includes(btnTextLower)) {
-              isPostFight = true;
-            }
-          });
-          debugLog(`Post-fight buttons found: ${buttonTexts.join(", ")}`);
-          if (isPostFight) {
-            fightState = "post-fight";
-            debugLog("Fight state: post-fight (post-fight buttons matched)");
-          } else {
-            fightState = "pre-fight";
-            debugLog("Fight state: pre-fight (post-fight container found but no matching post-fight buttons)");
-          }
-        }
-        else {
-          fightState = "pre-fight";
-          debugLog("Fight state: pre-fight (default state)");
-        }
+        determineFightState();
       });
-
       stateObserver.observe(document.body, { childList: true, subtree: true });
     } else {
       debugLog("Not on attack page, skipping fight state observer setup.");
     }
 
-    const observer = new MutationObserver(() => {
-      document.querySelectorAll(".weaponWrapper___h3buK").forEach(wrapper => {
-        if (wrapper.dataset.quickBound) return;
-        wrapper.dataset.quickBound = "true";
-        const marker = wrapper.querySelector(".topMarker___OjRyU");
-        const type = getWeaponType(marker?.id || "");
-        const img = wrapper.querySelector("img");
-        if (img && type && settings[type]) {
-          const name = img.alt || type.charAt(0).toUpperCase() + type.slice(1);
-          img.style.display = "none";
-          const label = document.createElement("div");
-          label.textContent = name;
-          label.style.color = "#aaa";
-          label.style.textAlign = "center";
-          label.style.fontSize = "14px";
-          label.style.margin = "6px";
-          label.style.fontWeight = "bold";
-          img.parentNode.appendChild(label);
-        }
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType !== Node.ELEMENT_NODE) return;
+          const wrappers = node.classList?.contains("weaponWrapper___h3buK")
+            ? [node]
+            : node.querySelectorAll?.(".weaponWrapper___h3buK");
+          if (wrappers && wrappers.length > 0) {
+            wrappers.forEach(async (wrapper) => {
+              if (wrapper.dataset.quickBound) return;
+              wrapper.dataset.quickBound = "true";
+              const marker = wrapper.querySelector(".topMarker___OjRyU");
+              const type = await getWeaponType(marker?.id || "");
+              const img = wrapper.querySelector("img");
+              if (img && type && settings[type]) {
+                const name = img.alt || type.charAt(0).toUpperCase() + type.slice(1);
+                img.style.display = "none";
+                const label = document.createElement("div");
+                label.className = "hide-label";
+                label.textContent = name;
+                label.style.color = "#aaa";
+                label.style.textAlign = "center";
+                label.style.fontSize = "14px";
+                label.style.margin = "6px";
+                label.style.fontWeight = "bold";
+                img.parentNode.appendChild(label);
+                debugLog(`Hid ${type} weapon image and added label: ${name}`);
+              }
 
-        wrapper.addEventListener("click", async () => {
-          const currentFightState = isAttackPage() ? fightState : "pre-fight";
-          debugLog(`Weapon clicked, fight state: ${currentFightState}`);
-          if (settings.reactive) await reloadAttackData();
+              wrapper.addEventListener("click", async () => {
+                const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
+                debugLog(`Weapon clicked, fight state: ${currentFightState}`);
+                if (settings.reactive) await reloadAttackData();
 
-          if (currentFightState === "pre-fight" && settings.quick) {
-            const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-            if (startBtn) {
-              debugLog("Starting fight via weapon click");
-              startBtn.click();
-            } else {
-              debugLog("Start Fight button not found");
-            }
-          } else if (currentFightState === "post-fight" && settings.quick) {
-            debugLog("Applying Quick Attack action in post-fight state");
-            await updateQuickAttackUI();
+                if (currentFightState === "pre-fight" && settings.quick) {
+                  const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+                  if (startBtn) {
+                    debugLog("Starting fight via weapon click");
+                    startBtn.click();
+                  } else {
+                    debugLog("Start Fight button not found");
+                  }
+                } else if (currentFightState === "post-fight" && settings.quick) {
+                  debugLog("Applying Quick Attack action in post-fight state");
+                  await updateQuickAttackUI();
+                }
+              });
+            });
           }
         });
       });
