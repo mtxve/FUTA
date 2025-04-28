@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.01a
+// @version      0.7.02a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -75,6 +75,10 @@
       debugLog("Reactive Attack: Start Fight button not found for state update.");
       return;
     }
+    if (btn.textContent.trim() !== "Start Fight" && !btn.textContent.includes("Start Fight (")) {
+      debugLog("Reactive Attack: Button is not 'Start Fight', skipping update.");
+      return;
+    }
     const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
     if (!reactiveEnabled) {
       btn.disabled = false;
@@ -104,7 +108,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.01a",
+    VERSION: "0.7.02a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -363,7 +367,7 @@
         Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
         Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong><br/>
         Version: <a href="https://www.torn.com/forums.php#/p=threads&f=999&t=16460741&b=1&a=36891&to=25815503" target="_blank" style="color: inherit; text-decoration: underline;">${FUTA.VERSION}</a><br/>
-        Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank">Asemov</a>`;
+        Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank" style="color: inherit; text-decoration: underline;">Asemov</a>`;
     }
   }
 
@@ -708,7 +712,6 @@
               bigBoiBtn.setAttribute("data-enabled", newState);
               bigBoiBtn.style.borderColor = newState ? "green" : "red";
               await GM.setValue("big_boi_mode_enabled", newState);
-              // Update stored modes
               const storedModesStr = await GM.getValue("charlemagne_modes", "{}");
               const modes = JSON.parse(storedModesStr);
               modes.big_boi_mode.active = newState;
@@ -904,7 +907,23 @@
     debugLog("Reloading attack data for target ID: " + targetID);
     const attackDataUrl = `https://www.torn.com/loader.php?sid=attackData&user2ID=${targetID}`;
     try {
-      const response = await fetch(attackDataUrl, { credentials: "same-origin" });
+      const response = await fetch(attackDataUrl, {
+        credentials: "same-origin",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest"
+        }
+      });
+      if (!response.ok) {
+        debugLog(`Failed to fetch attack data: HTTP ${response.status} - ${response.statusText}`);
+        return;
+      }
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        debugLog(`Attack data response is not JSON: Content-Type=${contentType}, Response=${text.substring(0, 50)}...`);
+        return;
+      }
       const data = await response.json();
       debugLog("Attack data reloaded: " + JSON.stringify(data));
     } catch (err) {
@@ -921,6 +940,61 @@
       melee: await GM.getValue("hide_melee", false),
       temp: await GM.getValue("hide_temp", false)
     };
+
+    let fightState = "pre-fight";
+
+    const isAttackPage = () => {
+      return window.location.href.includes("loader.php?sid=attack") && window.location.search.includes("user2ID=");
+    };
+
+    if (isAttackPage()) {
+      debugLog("On attack page, setting up fight state observer...");
+      const stateObserver = new MutationObserver(() => {
+        const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+        const inFightUI = document.querySelector(".attackWrapper___p0_It");
+        const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
+
+        if (startBtn && (startBtn.textContent.trim() === "Start Fight" || startBtn.textContent.includes("Start Fight ("))) {
+          fightState = "pre-fight";
+          debugLog("Fight state: pre-fight (Start Fight button found)");
+        }
+        else if (inFightUI) {
+          fightState = "in-fight";
+          debugLog("Fight state: in-fight (attackWrapper found)");
+        }
+        else if (postFightContainer) {
+          const buttons = postFightContainer.querySelectorAll("button.torn-btn");
+          const postFightButtonNames = ["leave", "mug", "hospitalize", "hosp"];
+          let isPostFight = false;
+          const buttonTexts = [];
+          buttons.forEach(btn => {
+            const btnText = btn.innerText.trim();
+            buttonTexts.push(btnText);
+            const btnTextLower = btnText.toLowerCase();
+            if (postFightButtonNames.includes(btnTextLower)) {
+              isPostFight = true;
+            }
+          });
+          debugLog(`Post-fight buttons found: ${buttonTexts.join(", ")}`);
+          if (isPostFight) {
+            fightState = "post-fight";
+            debugLog("Fight state: post-fight (post-fight buttons matched)");
+          } else {
+            fightState = "pre-fight";
+            debugLog("Fight state: pre-fight (post-fight container found but no matching post-fight buttons)");
+          }
+        }
+        else {
+          fightState = "pre-fight";
+          debugLog("Fight state: pre-fight (default state)");
+        }
+      });
+
+      stateObserver.observe(document.body, { childList: true, subtree: true });
+    } else {
+      debugLog("Not on attack page, skipping fight state observer setup.");
+    }
+
     const observer = new MutationObserver(() => {
       document.querySelectorAll(".weaponWrapper___h3buK").forEach(wrapper => {
         if (wrapper.dataset.quickBound) return;
@@ -940,21 +1014,23 @@
           label.style.fontWeight = "bold";
           img.parentNode.appendChild(label);
         }
+
         wrapper.addEventListener("click", async () => {
-          if (settings.reactive) {
-            await reloadAttackData();
-          }
-          if (settings.quick) {
-            const startBtn = document.querySelector("#react-root button.torn-btn[type='submit']");
-            if (startBtn) startBtn.click();
-            setTimeout(async () => {
-              try {
-                const postFightContainer = await waitForElm("div.dialogButtons___nX4Bz");
-                await updateQuickAttackUI(postFightContainer);
-              } catch (e) {
-                console.error("Post-fight dialog not found for Quick Attack:", e);
-              }
-            }, 1500);
+          const currentFightState = isAttackPage() ? fightState : "pre-fight";
+          debugLog(`Weapon clicked, fight state: ${currentFightState}`);
+          if (settings.reactive) await reloadAttackData();
+
+          if (currentFightState === "pre-fight" && settings.quick) {
+            const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+            if (startBtn) {
+              debugLog("Starting fight via weapon click");
+              startBtn.click();
+            } else {
+              debugLog("Start Fight button not found");
+            }
+          } else if (currentFightState === "post-fight" && settings.quick) {
+            debugLog("Applying Quick Attack action in post-fight state");
+            await updateQuickAttackUI();
           }
         });
       });
@@ -962,23 +1038,58 @@
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
-  async function updateQuickAttackUI(postFightContainer) {
-    const action = document.getElementById("quick-attack-action")?.value || "leave";
+  async function updateQuickAttackUI() {
+    const action = await GM.getValue("quick_attack_action", "leave");
+    debugLog(`Quick Attack: Retrieved action setting: '${action}'`);
+
+    const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
+    if (!postFightContainer) {
+      debugLog("Quick Attack: Post-fight container not found");
+      return;
+    }
+
     const buttons = postFightContainer.querySelectorAll("button.torn-btn");
+    if (!buttons || buttons.length === 0) {
+      debugLog("Quick Attack: No buttons found in post-fight container");
+      return;
+    }
+
     let targetButton = null;
+
+    const actionMap = {
+      leave: "leave",
+      hospital: "hospitalize",
+      mug: "mug"
+    };
+
+    const expectedButtonText = actionMap[action] || actionMap.leave;
+    debugLog(`Quick Attack: Expected button text: '${expectedButtonText}' based on action '${action}'`);
+
+    const buttonTexts = Array.from(buttons).map(btn => btn.innerText.trim());
+    debugLog(`Quick Attack: Available buttons: ${buttonTexts.join(", ")}`);
+
     Array.from(buttons).forEach(btn => {
-      const txt = btn.innerText.toLowerCase();
-      if (action === "leave" && txt.includes("leave")) targetButton = btn;
-      else if (action === "hospital" && (txt.includes("hospital") || txt.includes("hosp"))) targetButton = btn;
-      else if (action === "mug" && txt.includes("mug")) targetButton = btn;
+      const btnText = btn.innerText.trim();
+      const btnTextLower = btnText.toLowerCase();
+      debugLog(`Quick Attack: Checking button with text: '${btnText}'`);
+
+      if (btnTextLower === expectedButtonText) {
+        debugLog(`Quick Attack: Exact match found for '${btnText}'`);
+        targetButton = btn;
+      }
+      else if (action === "hospital" && (btnTextLower === "hospitalize" || btnTextLower === "hosp")) {
+        debugLog(`Quick Attack: Variation match found for 'hospital' with button text: '${btnText}'`);
+        targetButton = btn;
+      }
     });
+
     if (targetButton) {
-      debugLog(`Quick Attack: Clicking post-fight button '${targetButton.innerText}'`);
+      debugLog(`Quick Attack: Clicking button with text '${targetButton.innerText}'`);
       setTimeout(() => {
         targetButton.click();
-      }, 500);
+      }, 100);
     } else {
-      debugLog(`Quick Attack: No matching post-fight button found for action '${action}'`);
+      debugLog(`Quick Attack: No matching button found for action '${action}' (expected '${expectedButtonText}')`);
     }
   }
 
