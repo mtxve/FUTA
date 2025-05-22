@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.13a
+// @version      0.7.14a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -108,7 +108,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.13a",
+    VERSION: "0.7.14a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -1048,27 +1048,33 @@ async function enableQuickAttackAndHiding() {
             }
 
             wrapper.addEventListener("click", async (e) => {
-              const now = Date.now();
-              if (now - lastClickTime < 300) return; // Debounce to prevent rapid clicks
-              lastClickTime = now;
+  const now = Date.now();
+  if (now - lastClickTime < 300) return; // Debounce to prevent rapid clicks
+  lastClickTime = now;
 
-              const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
-              debugLog(`Weapon clicked, fight state: ${currentFightState}`);
-              if (settings.reactive) await reloadAttackData();
+  const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
+  debugLog(`Weapon clicked, fight state: ${currentFightState}`);
+  if (settings.reactive) await reloadAttackData();
 
-              if (currentFightState === "pre-fight" && settings.quick) {
-                const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-                if (startBtn) {
-                  debugLog("Starting fight via weapon click");
-                  startBtn.click();
-                } else {
-                  debugLog("Start Fight button not found");
-                }
-              } else if (currentFightState === "post-fight" && settings.quick) {
-                debugLog("Weapon clicked in post-fight state, applying Quick Attack action");
-                await updateQuickAttackUI();
-              }
-            });
+  if (currentFightState === "pre-fight" && settings.quick) {
+    const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+    if (startBtn) {
+      debugLog("Starting fight via weapon click");
+      startBtn.click();
+    } else {
+      debugLog("Start Fight button not found");
+    }
+  } else if (currentFightState === "post-fight" && settings.quick) {
+    debugLog("Weapon clicked in post-fight state, triggering Quick Attack action");
+    const targetButton = await updateQuickAttackUI();
+    if (targetButton) {
+      debugLog(`Quick Attack: Clicking button '${targetButton.innerText}'`);
+      targetButton.click();
+    } else {
+      debugLog("Quick Attack: No target button found to click");
+    }
+  }
+});
           });
         }
       });
@@ -1085,19 +1091,19 @@ async function updateQuickAttackUI() {
   const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
   if (!postFightContainer) {
     debugLog("Quick Attack: Post-fight container not found");
-    return;
+    return null;
   }
 
   const buttons = postFightContainer.querySelectorAll("button.torn-btn");
   if (!buttons || buttons.length === 0) {
     debugLog("Quick Attack: No buttons found in post-fight container");
-    return;
+    return null;
   }
 
   // If Reactive Attack is enabled, check hospital status
   if (reactiveEnabled && hospitalStatus.isInHospital) {
     debugLog("Quick Attack: Target is in hospital, aborting action due to Reactive Attack");
-    return;
+    return null;
   }
 
   const actionMap = {
@@ -1126,14 +1132,12 @@ async function updateQuickAttackUI() {
   });
 
   if (targetButton) {
-    debugLog(`Quick Attack: Highlighting and clicking button with text '${targetButton.innerText}'`);
-    targetButton.style.border = "2px solid gold";
-    setTimeout(() => {
-      targetButton.click();
-    }, 100);
+    debugLog(`Quick Attack: Identified target button with text '${targetButton.innerText}'`);
   } else {
     debugLog(`Quick Attack: No matching button found for action '${action}' (expected one of: ${expectedActions.join(", ")})`);
   }
+
+  return targetButton; // Return the button element or null
 }
 
   async function executeAttackNotifier() {
