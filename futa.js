@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.03a
+// @version      0.7.13a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -50,7 +50,7 @@
             hospitalStatus.until = 0;
           }
           if (reactiveEnabled) {
-            setTimeout(() => updateStartFightButtonState(), 100);
+            updateStartFightButtonState(); // Synchronous call instead of setTimeout
           }
         }
         return data;
@@ -108,7 +108,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.03a",
+    VERSION: "0.7.13a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -191,54 +191,59 @@
   }
 
   async function getCachedPingData() {
-    debugLog("getCachedPingData() called...");
-    const now = Date.now();
-    const lastPingTimestamp = parseInt(localStorage.getItem("lastPingTimestamp") || "0", 10);
-    const cachedData = localStorage.getItem("lastPingData");
+  debugLog("getCachedPingData() called...");
+  const now = Date.now();
+  const lastPingTimestamp = parseInt(localStorage.getItem("lastPingTimestamp") || "0", 10);
+  const cachedData = localStorage.getItem("lastPingData");
 
-    if ((now - lastPingTimestamp) < FUTA.UPDATE_INTERVAL && cachedData) {
-      try {
-        const parsedData = JSON.parse(cachedData);
-        debugLog("Returning cached ping data: " + JSON.stringify(parsedData));
-        return parsedData;
-      } catch (e) {
-        debugLog("Error parsing cached data: " + e);
-      }
+  if ((now - lastPingTimestamp) < FUTA.UPDATE_INTERVAL && cachedData) {
+    try {
+      const parsedData = JSON.parse(cachedData);
+      debugLog("Returning cached ping data: " + JSON.stringify(parsedData));
+      return parsedData;
+    } catch (e) {
+      debugLog("Error parsing cached data: " + e);
     }
+  }
 
-    debugLog("Fetching new ping data...");
-    const apiKey = await GM.getValue("api_key", "");
-    if (!apiKey) {
-      debugLog("No API key provided. Ping request skipped.");
-      return {};
-    }
+  debugLog("Fetching new ping data...");
+  const apiKey = await GM.getValue("api_key", "");
+  if (!apiKey) {
+    debugLog("No API key provided. Ping request skipped.");
+    localStorage.setItem("charlemagne_status", "No Connection");
+    return {};
+  }
 
-    const faction = await GM.getValue("user_faction", "Flatline");
-    const baseEndpoint = FACTION_ENDPOINTS[faction] || FACTION_ENDPOINTS.Flatline;
-    const pingUrlWithKey = `${baseEndpoint}/ping?api_key=${encodeURIComponent(apiKey)}`;
-    return new Promise((resolve) => {
-      GM.xmlHttpRequest({
-        method: "GET",
-        url: pingUrlWithKey,
-        onload: (res) => {
-          try {
-            const data = JSON.parse(res.responseText);
-            localStorage.setItem("lastPingTimestamp", now.toString());
-            localStorage.setItem("lastPingData", JSON.stringify(data));
-            debugLog("New ping data fetched: " + JSON.stringify(data));
-            resolve(data);
-          } catch (e) {
-            debugLog("Error parsing ping response: " + e);
-            resolve({});
-          }
-        },
-        onerror: () => {
+  const faction = await GM.getValue("user_faction", "Flatline");
+  const baseEndpoint = FACTION_ENDPOINTS[faction] || FACTION_ENDPOINTS.Flatline;
+  const pingUrlWithKey = `${baseEndpoint}/ping?api_key=${encodeURIComponent(apiKey)}`;
+  return new Promise((resolve) => {
+    GM.xmlHttpRequest({
+      method: "GET",
+      url: pingUrlWithKey,
+      onload: (res) => {
+        try {
+          const data = JSON.parse(res.responseText);
           localStorage.setItem("lastPingTimestamp", now.toString());
+          localStorage.setItem("lastPingData", JSON.stringify(data));
+          const isConnected = data && Object.keys(data).length > 0 && data.success !== false;
+          localStorage.setItem("charlemagne_status", isConnected ? "Established" : "No Connection");
+          debugLog("New ping data fetched: " + JSON.stringify(data));
+          resolve(data);
+        } catch (e) {
+          debugLog("Error parsing ping response: " + e);
+          localStorage.setItem("charlemagne_status", "No Connection");
           resolve({});
         }
-      });
+      },
+      onerror: () => {
+        localStorage.setItem("lastPingTimestamp", now.toString());
+        localStorage.setItem("charlemagne_status", "No Connection");
+        resolve({});
+      }
     });
-  }
+  });
+}
 
   async function fetchTornAPIStatus() {
     debugLog("fetchTornAPIStatus() called...");
@@ -337,9 +342,11 @@
   }
 
   function getConnectionStatus(pingData) {
-    const isCharlConnected = pingData && Object.keys(pingData).length > 0;
+    const isCharlConnected = pingData && Object.keys(pingData).length > 0 && pingData.success !== false;
+    const charlStatus = isCharlConnected ? "Established" : "No Connection";
+    localStorage.setItem("charlemagne_status", charlStatus);
     return {
-      charlStatus: isCharlConnected ? "Established" : "No Connection",
+      charlStatus: charlStatus,
       charlColor: isCharlConnected ? "green" : "red",
       tornStatus: FUTA.tornApiStatus,
       tornColor: FUTA.tornApiStatus === "Established" ? "green" : "red"
@@ -347,29 +354,42 @@
   }
 
   function _updateBannerWithPingData(pingData) {
-    debugLog("_updateBannerWithPingData called with pingData: " + JSON.stringify(pingData));
-    const { charlStatus, charlColor, tornStatus, tornColor } = getConnectionStatus(pingData);
-    const bannerEl = document.getElementById("persistent-banner");
-    if (bannerEl) {
-      bannerEl.innerHTML = `
-        Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-        Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong>`;
-      bannerEl.style.display = (charlStatus !== "Established" || tornStatus !== "Established") ? "block" : "none";
-    }
+  debugLog("_updateBannerWithPingData called with pingData: " + JSON.stringify(pingData));
+  const storedCharlStatus = localStorage.getItem("charlemagne_status") || "No Connection";
+  const { charlStatus, charlColor, tornStatus, tornColor } = pingData ? getConnectionStatus(pingData) : {
+    charlStatus: storedCharlStatus,
+    charlColor: storedCharlStatus === "Established" ? "green" : "red",
+    tornStatus: FUTA.tornApiStatus,
+    tornColor: FUTA.tornApiStatus === "Established" ? "green" : "red"
+  };
+  const bannerEl = document.getElementById("persistent-banner");
+  if (bannerEl) {
+    bannerEl.innerHTML = `
+      Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
+      Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong>`;
+    bannerEl.style.display = (charlStatus !== "Established" || tornStatus !== "Established") ? "block" : "none";
   }
+}
 
-  function _updateSettingsAPIStatus(pingData) {
-    debugLog("_updateSettingsAPIStatus called with pingData: " + JSON.stringify(pingData));
-    const { charlStatus, charlColor, tornStatus, tornColor } = getConnectionStatus(pingData);
-    const statusEl = document.getElementById("settings-api-status");
-    if (statusEl) {
-      statusEl.innerHTML = `
-        Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-        Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong><br/>
-        Version: <a href="https://www.torn.com/forums.php#/p=threads&f=999&t=16460741&b=1&a=36891&to=25815503" target="_blank" style="color: inherit; text-decoration: underline;">${FUTA.VERSION}</a><br/>
-        Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank" style="color: inherit; text-decoration: underline;">Asemov</a>`;
-    }
+function _updateSettingsAPIStatus(pingData) {
+  debugLog("_updateSettingsAPIStatus called with pingData: " + JSON.stringify(pingData));
+  const storedCharlStatus = localStorage.getItem("charlemagne_status") || "No Connection";
+  const { charlStatus, charlColor, tornStatus, tornColor } = pingData ? getConnectionStatus(pingData) : {
+    charlStatus: storedCharlStatus,
+    charlColor: storedCharlStatus === "Established" ? "green" : "red",
+    tornStatus: FUTA.tornApiStatus,
+    tornColor: FUTA.tornApiStatus === "Established" ? "green" : "red"
+  };
+
+  const statusEl = document.getElementById("settings-api-status");
+  if (statusEl) {
+    statusEl.innerHTML = `
+      Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
+      Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong><br/>
+      Version: <a href="https://www.torn.com/forums.php#/p=threads&f=999&t=16460741&b=1&a=36891&to=25815503" target="_blank" style="color: inherit; text-decoration: underline;">${FUTA.VERSION}</a><br/>
+      Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank" style="color: inherit; text-decoration: underline;">Asemov</a>`;
   }
+}
 
   async function createChatButton() {
     if (document.getElementById("bust-tab-button")) {
@@ -798,7 +818,7 @@
                 btn.disabled = true;
                 btn.classList.add("disabled");
                 btn.textContent = "Start Fight (Checking...)";
-                await updateStartFightButtonState();
+                updateStartFightButtonState(); // Synchronous update
               } else {
                 btn.disabled = false;
                 btn.classList.remove("disabled");
@@ -931,180 +951,190 @@
     }
   }
 
-  async function enableQuickAttackAndHiding() {
-    const settings = {
-      quick: await GM.getValue("quick_attack_enabled", false),
-      reactive: await GM.getValue("reactive_attack_enabled", false),
-      primary: await GM.getValue("hide_primary", false),
-      secondary: await GM.getValue("hide_secondary", false),
-      melee: await GM.getValue("hide_melee", false),
-      temp: await GM.getValue("hide_temp", false)
-    };
+async function enableQuickAttackAndHiding() {
+  const settings = {
+    quick: await GM.getValue("quick_attack_enabled", false),
+    reactive: await GM.getValue("reactive_attack_enabled", false),
+    primary: await GM.getValue("hide_primary", false),
+    secondary: await GM.getValue("hide_secondary", false),
+    melee: await GM.getValue("hide_melee", false),
+    temp: await GM.getValue("hide_temp", false)
+  };
 
-    let fightState = "pre-fight";
+  let fightState = "pre-fight";
+  let lastClickTime = 0;
 
-    const isAttackPage = () => {
-      return window.location.href.includes("loader.php?sid=attack") && window.location.search.includes("user2ID=");
-    };
+  const isAttackPage = () => {
+    return window.location.href.includes("loader.php?sid=attack") && window.location.search.includes("user2ID=");
+  };
 
-    const determineFightState = () => {
-      const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-      const inFightUI = document.querySelector(".attackWrapper___p0_It");
-      const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
+  const determineFightState = () => {
+    const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+    const inFightUI = document.querySelector(".attackWrapper___p0_It");
+    const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
 
-      if (startBtn && (startBtn.textContent.trim() === "Start Fight" || startBtn.textContent.includes("Start Fight ("))) {
-        fightState = "pre-fight";
-        debugLog("Fight state: pre-fight (Start Fight button found)");
-      } else if (inFightUI) {
-        fightState = "in-fight";
-        debugLog("Fight state: in-fight (attackWrapper found)");
-      } else if (postFightContainer) {
-        const buttons = postFightContainer.querySelectorAll("button.torn-btn");
-        const postFightButtonNames = ["leave", "mug", "hospitalize", "hosp"];
-        let isPostFight = false;
-        const buttonTexts = [];
-        buttons.forEach(btn => {
-          const btnText = btn.innerText.trim();
-          buttonTexts.push(btnText);
-          const btnTextLower = btnText.toLowerCase();
-          if (postFightButtonNames.includes(btnTextLower)) {
-            isPostFight = true;
-          }
-        });
-        debugLog(`Post-fight buttons found: ${buttonTexts.join(", ")}`);
-        if (isPostFight) {
-          fightState = "post-fight";
-          debugLog("Fight state: post-fight (post-fight buttons matched)");
-        } else {
-          fightState = "pre-fight";
-          debugLog("Fight state: pre-fight (post-fight container found but no matching post-fight buttons)");
+    if (startBtn && (startBtn.textContent.trim() === "Start Fight" || startBtn.textContent.includes("Start Fight ("))) {
+      fightState = "pre-fight";
+      debugLog("Fight state: pre-fight (Start Fight button found)");
+    } else if (inFightUI) {
+      fightState = "in-fight";
+      debugLog("Fight state: in-fight (attackWrapper found)");
+    } else if (postFightContainer) {
+      const buttons = postFightContainer.querySelectorAll("button.torn-btn");
+      const postFightButtonNames = ["leave", "mug", "hospitalize", "hosp"];
+      let isPostFight = false;
+      const buttonTexts = [];
+
+      buttons.forEach(btn => {
+        const btnText = btn.innerText.trim().toLowerCase();
+        buttonTexts.push(btnText);
+        if (postFightButtonNames.includes(btnText)) {
+          isPostFight = true;
         }
+      });
+
+      debugLog(`Post-fight buttons found: ${buttonTexts.join(", ")}`);
+      if (isPostFight && buttons.length > 0) {
+        fightState = "post-fight";
+        debugLog("Fight state: post-fight (post-fight buttons matched)");
       } else {
         fightState = "pre-fight";
-        debugLog("Fight state: pre-fight (default state)");
+        debugLog("Fight state: pre-fight (post-fight container found but no valid post-fight buttons)");
       }
-      return fightState;
-    };
-
-    if (isAttackPage()) {
-      debugLog("On attack page, setting up fight state observer...");
-      const stateObserver = new MutationObserver(() => {
-        determineFightState();
-      });
-      stateObserver.observe(document.body, { childList: true, subtree: true });
     } else {
-      debugLog("Not on attack page, skipping fight state observer setup.");
+      fightState = "pre-fight";
+      debugLog("Fight state: pre-fight (default state)");
     }
+    return fightState;
+  };
 
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType !== Node.ELEMENT_NODE) return;
-          const wrappers = node.classList?.contains("weaponWrapper___h3buK")
-            ? [node]
-            : node.querySelectorAll?.(".weaponWrapper___h3buK");
-          if (wrappers && wrappers.length > 0) {
-            wrappers.forEach(async (wrapper) => {
-              if (wrapper.dataset.quickBound) return;
-              wrapper.dataset.quickBound = "true";
-              const marker = wrapper.querySelector(".topMarker___OjRyU");
-              const type = await getWeaponType(marker?.id || "");
-              const img = wrapper.querySelector("img");
-              if (img && type && settings[type]) {
-                const name = img.alt || type.charAt(0).toUpperCase() + type.slice(1);
-                img.style.display = "none";
-                const label = document.createElement("div");
-                label.className = "hide-label";
-                label.textContent = name;
-                label.style.color = "#aaa";
-                label.style.textAlign = "center";
-                label.style.fontSize = "14px";
-                label.style.margin = "6px";
-                label.style.fontWeight = "bold";
-                img.parentNode.appendChild(label);
-                debugLog(`Hid ${type} weapon image and added label: ${name}`);
-              }
+  if (isAttackPage()) {
+    debugLog("On attack page, setting up fight state observer...");
+    const stateObserver = new MutationObserver(() => {
+      determineFightState();
+    });
+    stateObserver.observe(document.body, { childList: true, subtree: true });
+  } else {
+    debugLog("Not on attack page, skipping fight state observer setup.");
+  }
 
-              wrapper.addEventListener("click", async () => {
-                const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
-                debugLog(`Weapon clicked, fight state: ${currentFightState}`);
-                if (settings.reactive) await reloadAttackData();
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const wrappers = node.classList?.contains("weaponWrapper___h3buK")
+          ? [node]
+          : node.querySelectorAll?.(".weaponWrapper___h3buK");
+        if (wrappers && wrappers.length > 0) {
+          wrappers.forEach(async (wrapper) => {
+            if (wrapper.dataset.quickBound) return;
+            wrapper.dataset.quickBound = "true";
+            const marker = wrapper.querySelector(".topMarker___OjRyU");
+            const type = await getWeaponType(marker?.id || "");
+            const img = wrapper.querySelector("img");
+            if (img && type && settings[type]) {
+              const name = img.alt || type.charAt(0).toUpperCase() + type.slice(1);
+              img.style.display = "none";
+              const label = document.createElement("div");
+              label.className = "hide-label";
+              label.textContent = name;
+              label.style.color = "#aaa";
+              label.style.textAlign = "center";
+              label.style.fontSize = "14px";
+              label.style.margin = "6px";
+              label.style.fontWeight = "bold";
+              img.parentNode.appendChild(label);
+              debugLog(`Hid ${type} weapon image and added label: ${name}`);
+            }
 
-                if (currentFightState === "pre-fight" && settings.quick) {
-                  const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-                  if (startBtn) {
-                    debugLog("Starting fight via weapon click");
-                    startBtn.click();
-                  } else {
-                    debugLog("Start Fight button not found");
-                  }
-                } else if (currentFightState === "post-fight" && settings.quick) {
-                  debugLog("Applying Quick Attack action in post-fight state");
-                  await updateQuickAttackUI();
+            wrapper.addEventListener("click", async (e) => {
+              const now = Date.now();
+              if (now - lastClickTime < 300) return; // Debounce to prevent rapid clicks
+              lastClickTime = now;
+
+              const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
+              debugLog(`Weapon clicked, fight state: ${currentFightState}`);
+              if (settings.reactive) await reloadAttackData();
+
+              if (currentFightState === "pre-fight" && settings.quick) {
+                const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+                if (startBtn) {
+                  debugLog("Starting fight via weapon click");
+                  startBtn.click();
+                } else {
+                  debugLog("Start Fight button not found");
                 }
-              });
+              } else if (currentFightState === "post-fight" && settings.quick) {
+                debugLog("Weapon clicked in post-fight state, applying Quick Attack action");
+                await updateQuickAttackUI();
+              }
             });
-          }
-        });
+          });
+        }
       });
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+async function updateQuickAttackUI() {
+  const action = await GM.getValue("quick_attack_action", "leave");
+  const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
+  debugLog(`Quick Attack: Retrieved action setting: '${action}', Reactive Attack: ${reactiveEnabled}`);
+
+  const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
+  if (!postFightContainer) {
+    debugLog("Quick Attack: Post-fight container not found");
+    return;
   }
 
-  async function updateQuickAttackUI() {
-    const action = await GM.getValue("quick_attack_action", "leave");
-    debugLog(`Quick Attack: Retrieved action setting: '${action}'`);
-
-    const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
-    if (!postFightContainer) {
-      debugLog("Quick Attack: Post-fight container not found");
-      return;
-    }
-
-    const buttons = postFightContainer.querySelectorAll("button.torn-btn");
-    if (!buttons || buttons.length === 0) {
-      debugLog("Quick Attack: No buttons found in post-fight container");
-      return;
-    }
-
-    let targetButton = null;
-
-    const actionMap = {
-      leave: "leave",
-      hospital: "hospitalize",
-      mug: "mug"
-    };
-
-    const expectedButtonText = actionMap[action] || actionMap.leave;
-    debugLog(`Quick Attack: Expected button text: '${expectedButtonText}' based on action '${action}'`);
-
-    const buttonTexts = Array.from(buttons).map(btn => btn.innerText.trim());
-    debugLog(`Quick Attack: Available buttons: ${buttonTexts.join(", ")}`);
-
-    Array.from(buttons).forEach(btn => {
-      const btnText = btn.innerText.trim();
-      const btnTextLower = btnText.toLowerCase();
-      debugLog(`Quick Attack: Checking button with text: '${btnText}'`);
-
-      if (btnTextLower === expectedButtonText) {
-        debugLog(`Quick Attack: Exact match found for '${btnText}'`);
-        targetButton = btn;
-      }
-      else if (action === "hospital" && (btnTextLower === "hospitalize" || btnTextLower === "hosp")) {
-        debugLog(`Quick Attack: Variation match found for 'hospital' with button text: '${btnText}'`);
-        targetButton = btn;
-      }
-    });
-
-    if (targetButton) {
-      debugLog(`Quick Attack: Clicking button with text '${targetButton.innerText}'`);
-      setTimeout(() => {
-        targetButton.click();
-      }, 100);
-    } else {
-      debugLog(`Quick Attack: No matching button found for action '${action}' (expected '${expectedButtonText}')`);
-    }
+  const buttons = postFightContainer.querySelectorAll("button.torn-btn");
+  if (!buttons || buttons.length === 0) {
+    debugLog("Quick Attack: No buttons found in post-fight container");
+    return;
   }
+
+  // If Reactive Attack is enabled, check hospital status
+  if (reactiveEnabled && hospitalStatus.isInHospital) {
+    debugLog("Quick Attack: Target is in hospital, aborting action due to Reactive Attack");
+    return;
+  }
+
+  const actionMap = {
+    leave: ["leave"],
+    hospital: ["hospitalize", "hosp"],
+    mug: ["mug"]
+  };
+
+  const expectedActions = actionMap[action] || actionMap.leave;
+  debugLog(`Quick Attack: Expected actions: ${expectedActions.join(", ")} based on action '${action}'`);
+
+  const buttonTexts = Array.from(buttons).map(btn => btn.innerText.trim());
+  debugLog(`Quick Attack: Available buttons: ${buttonTexts.join(", ")}`);
+
+  let targetButton = null;
+
+  Array.from(buttons).forEach(btn => {
+    const btnText = btn.innerText.trim();
+    const btnTextLower = btnText.toLowerCase();
+    debugLog(`Quick Attack: Checking button with text: '${btnText}'`);
+
+    if (expectedActions.includes(btnTextLower)) {
+      debugLog(`Quick Attack: Match found for '${btnText}'`);
+      targetButton = btn;
+    }
+  });
+
+  if (targetButton) {
+    debugLog(`Quick Attack: Highlighting and clicking button with text '${targetButton.innerText}'`);
+    targetButton.style.border = "2px solid gold";
+    setTimeout(() => {
+      targetButton.click();
+    }, 100);
+  } else {
+    debugLog(`Quick Attack: No matching button found for action '${action}' (expected one of: ${expectedActions.join(", ")})`);
+  }
+}
 
   async function executeAttackNotifier() {
     const healthElements = document.querySelectorAll('[id^=player-health-value]');
@@ -1176,7 +1206,6 @@
         btn.dataset.reactiveDisabled = "true";
         btn.disabled = true;
         btn.classList.add("disabled");
-        btn.style.minWidth = "175px";
         btn.textContent = "Start Fight (Checking...)";
         debugLog("Reactive Attack: Start Fight button disabled on load");
         obs.disconnect();
@@ -1267,10 +1296,15 @@
   }
 
   async function forceAttackInterfaceIfHospital() {
-    if (isHospitalErrorPage()) {
-      debugLog("Hospital error detected. Forcing attack interface...");
+    const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
+      if (!reactiveEnabled) return;
+
+      if (isHospitalErrorPage() && !hospitalStatus.isInHospital) {
+        debugLog("Hospital error detected, but target not in hospital. Forcing attack interface...");
       await injectAttackInterface();
-    }
+        } else {
+        debugLog("Hospital error detected, but target is in hospital or Reactive Attack disabled. Skipping injection.");
+      }
   }
 
   function monitorHospitalErrorPage() {
@@ -1341,30 +1375,39 @@
   }
 
   async function initUI() {
-    try {
-      const cachedPingData = localStorage.getItem("lastPingData");
-      if (cachedPingData) FUTA.sharedPingData = JSON.parse(cachedPingData) || {};
-      const cachedSummary = localStorage.getItem("lastSummary");
-      if (cachedSummary) FUTA.tornApiStatus = cachedSummary.indexOf("❌") === 0 ? "No Connection" : "Established";
-      await createChatButton();
-      await waitForElm("body").then(() => enableQuickAttackAndHiding());
-      waitForKeyElements("a.profile-button-attack", (node) => {
-        node.removeAttribute("onclick");
-        node.onclick = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          openAttack(node.href);
-          return false;
-        };
-      }, false);
-    } catch (e) {
-      debugLog("Error loading cached data: " + e);
+  try {
+    const cachedPingData = localStorage.getItem("lastPingData");
+    if (cachedPingData) {
+      const parsedPingData = JSON.parse(cachedPingData);
+      FUTA.sharedPingData = (parsedPingData && Object.keys(parsedPingData).length > 0 && parsedPingData.success !== false) ? parsedPingData : {};
+    } else {
       FUTA.sharedPingData = {};
-      FUTA.tornApiStatus = "No Connection";
-      if (!FUTA.chatButtonCreated) createChatButton();
     }
+    const cachedSummary = localStorage.getItem("lastSummary");
+    if (cachedSummary) {
+      FUTA.tornApiStatus = cachedSummary.indexOf("❌") === 0 ? "No Connection" : "Established";
+    }
+    await updateAllStatuses();
+    await createChatButton();
+    await waitForElm("body").then(() => enableQuickAttackAndHiding());
+    waitForKeyElements("a.profile-button-attack", (node) => {
+      node.removeAttribute("onclick");
+      node.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        openAttack(node.href);
+        return false;
+      };
+    }, false);
+  } catch (e) {
+    debugLog("Error loading cached data: " + e);
+    FUTA.sharedPingData = {};
+    FUTA.tornApiStatus = "No Connection";
+    localStorage.setItem("charlemagne_status", "No Connection");
+    if (!FUTA.chatButtonCreated) createChatButton();
   }
+}
 
   function setupIntervals() {
     setInterval(updateAllStatuses, FUTA.UPDATE_INTERVAL);
