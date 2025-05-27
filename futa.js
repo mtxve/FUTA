@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.14a
+// @version      0.7.15a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -27,31 +27,33 @@
     if (isFetchIntercepted) return;
     unsafeWindow.fetch = async (...args) => {
       const [resource, config] = args;
+      const url = typeof resource === 'string' ? resource : resource.url;
+      if (!url.includes('?sid=attackData')) {
+        return originalFetch(resource, config);
+      }
       const response = await originalFetch(resource, config);
       const cloneJson = async () => {
         let data = await response.clone().json();
-        if (response.url.includes('?sid=attackData')) {
-          const error = data?.DB?.error || '';
-          const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-          if (
-            error.includes('in hospital') ||
-            error.includes('unconscious') ||
-            error.includes('This fight no longer exists')
-          ) {
-            if (data?.DB?.defenderUser?.playername && !data.DB.defenderUser.playername.includes('[Hospital]')) {
-              data.DB.defenderUser.playername += ' [Hospital]';
-            }
-            hospitalStatus.isInHospital = true;
-            hospitalStatus.until = 0;
-            delete data.DB.error;
-            delete data.startErrorTitle;
-          } else {
-            hospitalStatus.isInHospital = false;
-            hospitalStatus.until = 0;
+        const error = data?.DB?.error || '';
+        const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
+        if (
+          error.includes('in hospital') ||
+          error.includes('unconscious') ||
+          error.includes('This fight no longer exists')
+        ) {
+          if (data?.DB?.defenderUser?.playername && !data.DB.defenderUser.playername.includes('[Hospital]')) {
+            data.DB.defenderUser.playername += ' [Hospital]';
           }
-          if (reactiveEnabled) {
-            updateStartFightButtonState(); // Synchronous call instead of setTimeout
-          }
+          hospitalStatus.isInHospital = true;
+          hospitalStatus.until = 0;
+          delete data.DB.error;
+          delete data.startErrorTitle;
+        } else {
+          hospitalStatus.isInHospital = false;
+          hospitalStatus.until = 0;
+        }
+        if (reactiveEnabled) {
+          updateStartFightButtonState();
         }
         return data;
       };
@@ -108,7 +110,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.14a",
+    VERSION: "0.7.15a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -499,7 +501,11 @@ function _updateSettingsAPIStatus(pingData) {
                 <label><input type="checkbox" id="hide-secondary"> Hide Secondary</label><br/>
                 <label><input type="checkbox" id="hide-melee"> Hide Melee</label><br/>
                 <label><input type="checkbox" id="hide-temp"> Hide Temp</label><br/>
-                <label>Execute: <input type="number" id="attack-execute" style="width:30px;" min="0" max="99" value="15"></label><br/>
+                <label style="display:flex; align-items:center; gap:8px;">
+                  <input type="checkbox" id="execute-toggle" />
+                  Execute:
+                  <input type="number" id="attack-execute" style="width:30px;" min="0" max="99" value="${await GM.getValue('attack_execute', '60')}" />
+                </label><br/>
               </div>
             </div>
             <div class="collapsible">
@@ -790,6 +796,7 @@ function _updateSettingsAPIStatus(pingData) {
       { id: "hide-secondary", key: "hide_secondary" },
       { id: "hide-melee", key: "hide_melee" },
       { id: "hide-temp", key: "hide_temp" },
+      { id: "execute-toggle", key: "execute_enabled" },
       { id: "ignore-bank", key: "ignore_bank" },
       { id: "ignore-medical", key: "ignore_medical" },
       { id: "ignore-booster", key: "ignore_booster" },
@@ -818,7 +825,7 @@ function _updateSettingsAPIStatus(pingData) {
                 btn.disabled = true;
                 btn.classList.add("disabled");
                 btn.textContent = "Start Fight (Checking...)";
-                updateStartFightButtonState(); // Synchronous update
+                updateStartFightButtonState(); 
               } else {
                 btn.disabled = false;
                 btn.classList.remove("disabled");
@@ -1048,33 +1055,34 @@ async function enableQuickAttackAndHiding() {
             }
 
             wrapper.addEventListener("click", async (e) => {
-  const now = Date.now();
-  if (now - lastClickTime < 300) return; // Debounce to prevent rapid clicks
-  lastClickTime = now;
+              if (!e.isTrusted) return;
+              const now = Date.now();
+              if (now - lastClickTime < 300) return; 
+              lastClickTime = now;
 
-  const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
-  debugLog(`Weapon clicked, fight state: ${currentFightState}`);
-  if (settings.reactive) await reloadAttackData();
+              const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
+              debugLog(`Weapon clicked, fight state: ${currentFightState}`);
+              if (settings.reactive) await reloadAttackData();
 
-  if (currentFightState === "pre-fight" && settings.quick) {
-    const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-    if (startBtn) {
-      debugLog("Starting fight via weapon click");
-      startBtn.click();
-    } else {
-      debugLog("Start Fight button not found");
-    }
-  } else if (currentFightState === "post-fight" && settings.quick) {
-    debugLog("Weapon clicked in post-fight state, triggering Quick Attack action");
-    const targetButton = await updateQuickAttackUI();
-    if (targetButton) {
-      debugLog(`Quick Attack: Clicking button '${targetButton.innerText}'`);
-      targetButton.click();
-    } else {
-      debugLog("Quick Attack: No target button found to click");
-    }
-  }
-});
+              if (currentFightState === "pre-fight" && settings.quick) {
+                const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+                if (startBtn) {
+                  debugLog("Starting fight via weapon click");
+                  startBtn.click();
+                } else {
+                  debugLog("Start Fight button not found");
+                }
+              } else if (currentFightState === "post-fight" && settings.quick) {
+                debugLog("Weapon clicked in post-fight state, triggering Quick Attack action");
+                const targetButton = await updateQuickAttackUI();
+                if (targetButton) {
+                  debugLog(`Quick Attack: Clicking button '${targetButton.innerText}'`);
+                  targetButton.click();
+                } else {
+                  debugLog("Quick Attack: No target button found to click");
+                }
+              }
+            });
           });
         }
       });
@@ -1100,7 +1108,6 @@ async function updateQuickAttackUI() {
     return null;
   }
 
-  // If Reactive Attack is enabled, check hospital status
   if (reactiveEnabled && hospitalStatus.isInHospital) {
     debugLog("Quick Attack: Target is in hospital, aborting action due to Reactive Attack");
     return null;
@@ -1137,10 +1144,12 @@ async function updateQuickAttackUI() {
     debugLog(`Quick Attack: No matching button found for action '${action}' (expected one of: ${expectedActions.join(", ")})`);
   }
 
-  return targetButton; // Return the button element or null
+  return targetButton; 
 }
 
   async function executeAttackNotifier() {
+    const execEnabled = await GM.getValue("execute_enabled", true);
+    if (!execEnabled) return;
     const healthElements = document.querySelectorAll('[id^=player-health-value]');
     if (!healthElements || healthElements.length < 2) return;
     const parts = healthElements[1].innerText.split("/");
@@ -1369,6 +1378,7 @@ async function updateQuickAttackUI() {
       await forceAttackInterfaceIfHospital();
     }
     addCustomStyles();
+    await createChatButton();
     await initUI();
     setupIntervals();
     if (window.location.href.includes("loader.php?sid=attack")) {
@@ -1409,7 +1419,7 @@ async function updateQuickAttackUI() {
     FUTA.sharedPingData = {};
     FUTA.tornApiStatus = "No Connection";
     localStorage.setItem("charlemagne_status", "No Connection");
-    if (!FUTA.chatButtonCreated) createChatButton();
+    if (!FUTA.chatButtonCreated) await createChatButton();
   }
 }
 
