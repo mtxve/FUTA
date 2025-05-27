@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.15a
+// @version      0.7.16a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -19,6 +19,7 @@
 
 (function () {
   let isFetchIntercepted = false;
+  let hospitalInjected = false;
   const originalFetch = unsafeWindow.fetch;
   let hospitalStatus = { isInHospital: false, until: 0 };
   let lastAttackDataFetch = 0;
@@ -110,7 +111,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.15a",
+    VERSION: "0.7.16a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -527,7 +528,7 @@ function _updateSettingsAPIStatus(pingData) {
     const chatGroup = await waitForElm("div[class^='group-chat-box']");
     chatGroup.after(wrapper);
     _updateSettingsAPIStatus(FUTA.sharedPingData);
-    _updateBannerWithPingData(FUTA.sharedPingData);
+    // _updateBannerWithPingData(FUTA.sharedPingData);
 
     await setupPanelEventListeners();
     setupCollapsibleSections();
@@ -796,6 +797,7 @@ function _updateSettingsAPIStatus(pingData) {
       { id: "hide-secondary", key: "hide_secondary" },
       { id: "hide-melee", key: "hide_melee" },
       { id: "hide-temp", key: "hide_temp" },
+      { id: "assassinate-toggle", key: "assassinate" },
       { id: "execute-toggle", key: "execute_enabled" },
       { id: "ignore-bank", key: "ignore_bank" },
       { id: "ignore-medical", key: "ignore_medical" },
@@ -825,7 +827,7 @@ function _updateSettingsAPIStatus(pingData) {
                 btn.disabled = true;
                 btn.classList.add("disabled");
                 btn.textContent = "Start Fight (Checking...)";
-                updateStartFightButtonState(); 
+                updateStartFightButtonState();
               } else {
                 btn.disabled = false;
                 btn.classList.remove("disabled");
@@ -965,11 +967,13 @@ async function enableQuickAttackAndHiding() {
     primary: await GM.getValue("hide_primary", false),
     secondary: await GM.getValue("hide_secondary", false),
     melee: await GM.getValue("hide_melee", false),
-    temp: await GM.getValue("hide_temp", false)
+    temp: await GM.getValue("hide_temp", false),
+    assassinate: await GM.getValue("assassinate", false)
   };
 
   let fightState = "pre-fight";
   let lastClickTime = 0;
+  let hasAssassinated = false;
 
   const isAttackPage = () => {
     return window.location.href.includes("loader.php?sid=attack") && window.location.search.includes("user2ID=");
@@ -1017,8 +1021,23 @@ async function enableQuickAttackAndHiding() {
 
   if (isAttackPage()) {
     debugLog("On attack page, setting up fight state observer...");
-    const stateObserver = new MutationObserver(() => {
-      determineFightState();
+    let prevState = "pre-fight";
+    hasAssassinated = false;
+    const stateObserver = new MutationObserver(async () => {
+      const newState = determineFightState();
+      if (newState === "pre-fight" && prevState !== "pre-fight") {
+        hasAssassinated = false;
+      }
+      if (settings.assassinate && prevState !== "in-fight" && newState === "in-fight" && !hasAssassinated) {
+        debugLog("Assassinate: first in-fight detected, triggering perk weapon");
+        const wrapper = Array.from(document.querySelectorAll(".weaponWrapper___h3buK"))
+          .find(w => w.querySelector("i.bonus-attachment-assassinate"));
+        if (wrapper) {
+          hasAssassinated = true;
+          wrapper.click();
+        }
+      }
+      prevState = newState;
     });
     stateObserver.observe(document.body, { childList: true, subtree: true });
   } else {
@@ -1057,7 +1076,7 @@ async function enableQuickAttackAndHiding() {
             wrapper.addEventListener("click", async (e) => {
               if (!e.isTrusted) return;
               const now = Date.now();
-              if (now - lastClickTime < 300) return; 
+              if (now - lastClickTime < 300) return;
               lastClickTime = now;
 
               const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
@@ -1144,7 +1163,7 @@ async function updateQuickAttackUI() {
     debugLog(`Quick Attack: No matching button found for action '${action}' (expected one of: ${expectedActions.join(", ")})`);
   }
 
-  return targetButton; 
+  return targetButton;
 }
 
   async function executeAttackNotifier() {
@@ -1320,11 +1339,13 @@ async function updateQuickAttackUI() {
       }
   }
 
-  function monitorHospitalErrorPage() {
-    const observer = new MutationObserver(async () => {
-      if (isHospitalErrorPage()) {
-        debugLog("Hospital error page loaded dynamically. Forcing attack interface...");
+  async function monitorHospitalErrorPage() {
+    const observer = new MutationObserver(async (mutations, obs) => {
+      if (isHospitalErrorPage() && !hospitalInjected) {
+        hospitalInjected = true;
+        debugLog("Hospital error page detected; injecting attack interface once.");
         await injectAttackInterface();
+        obs.disconnect();
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
@@ -1373,9 +1394,11 @@ async function updateQuickAttackUI() {
     openAttackNewTab = JSON.parse(await GM.getValue("open_attack_new_tab", "false"));
     await GM.getValue("currentWarMode", "Peace");
     const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-    if (reactiveEnabled) {
+    if (reactiveEnabled && window.location.href.includes("loader.php?sid=attack")) {
       enableFetchIntercept();
       await forceAttackInterfaceIfHospital();
+    } else {
+      disableFetchIntercept();
     }
     addCustomStyles();
     await createChatButton();
@@ -1404,16 +1427,18 @@ async function updateQuickAttackUI() {
     await updateAllStatuses();
     await createChatButton();
     await waitForElm("body").then(() => enableQuickAttackAndHiding());
-    waitForKeyElements("a.profile-button-attack", (node) => {
-      node.removeAttribute("onclick");
-      node.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        openAttack(node.href);
-        return false;
-      };
-    }, false);
+    if (await GM.getValue("minimize_on_attack", false)) {
+      waitForKeyElements("a.profile-button-attack", (node) => {
+        node.removeAttribute("onclick");
+        node.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          openAttack(node.href);
+          return false;
+        };
+      }, true);
+    }
   } catch (e) {
     debugLog("Error loading cached data: " + e);
     FUTA.sharedPingData = {};
