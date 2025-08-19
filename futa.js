@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.17a
+// @version      0.7.18a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -31,7 +31,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.17a",
+    VERSION: "0.7.18a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -110,7 +110,35 @@
       body:not(.dark-mode) #futa-panel select,
       body:not(.dark-mode) #futa-panel .collapsible-header { background: #f0f0f0 !important; border-color: #ccc !important; color: #000 !important; margin-bottom: 0 !important; }
       body:not(.dark-mode) #futa-panel .collapsible-content { background: #fff !important; border-color: #ccc !important; color: #000 !important; }
+      /* Flicker-free hiding via root classes + :has() */
+      html.futa-hide-primary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Primary"]) img { display: none !important; }
+      html.futa-hide-secondary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Secondary"]) img { display: none !important; }
+      html.futa-hide-melee .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Melee"]) img { display: none !important; }
+      html.futa-hide-temp .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Temporary"]) img { display: none !important; }
     `);
+  }
+
+  function applyHideClassesFromLocalStorage() {
+    try {
+      const root = document.documentElement;
+      const map = {
+        primary: localStorage.getItem('futa_hide_primary') === 'true',
+        secondary: localStorage.getItem('futa_hide_secondary') === 'true',
+        melee: localStorage.getItem('futa_hide_melee') === 'true',
+        temp: localStorage.getItem('futa_hide_temp') === 'true',
+      };
+      toggleRootHideClass(root, 'primary', map.primary);
+      toggleRootHideClass(root, 'secondary', map.secondary);
+      toggleRootHideClass(root, 'melee', map.melee);
+      toggleRootHideClass(root, 'temp', map.temp);
+    } catch (e) {
+      // no-op
+    }
+  }
+
+  function toggleRootHideClass(root, type, enabled) {
+    const cls = `futa-hide-${type}`;
+    if (enabled) root.classList.add(cls); else root.classList.remove(cls);
   }
 
   async function getCachedPingData() {
@@ -727,8 +755,16 @@ function _updateSettingsAPIStatus(pingData) {
       const el = document.getElementById(id);
       if (el) {
         el.checked = await GM.getValue(key, false);
+        if (key === 'hide_primary') toggleRootHideClass(document.documentElement, 'primary', el.checked);
+        if (key === 'hide_secondary') toggleRootHideClass(document.documentElement, 'secondary', el.checked);
+        if (key === 'hide_melee') toggleRootHideClass(document.documentElement, 'melee', el.checked);
+        if (key === 'hide_temp') toggleRootHideClass(document.documentElement, 'temp', el.checked);
         el.addEventListener("change", async () => {
           await GM.setValue(key, el.checked);
+          if (key === 'hide_primary') { localStorage.setItem('futa_hide_primary', String(el.checked)); toggleRootHideClass(document.documentElement, 'primary', el.checked); }
+          if (key === 'hide_secondary') { localStorage.setItem('futa_hide_secondary', String(el.checked)); toggleRootHideClass(document.documentElement, 'secondary', el.checked); }
+          if (key === 'hide_melee') { localStorage.setItem('futa_hide_melee', String(el.checked)); toggleRootHideClass(document.documentElement, 'melee', el.checked); }
+          if (key === 'hide_temp') { localStorage.setItem('futa_hide_temp', String(el.checked)); toggleRootHideClass(document.documentElement, 'temp', el.checked); }
           if (key === "open_attack_new_tab") openAttackNewTab = el.checked;
           if (key === "debug_mode") FUTA.debugEnabled = el.checked;
         });
@@ -779,6 +815,31 @@ function _updateSettingsAPIStatus(pingData) {
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function hookHistoryForAttackBindings() {
+    const rebindIfAttack = () => {
+      if (location.href.includes('loader.php?sid=attack')) {
+        enableQuickAttackAndHiding();
+      }
+    };
+
+    const _pushState = history.pushState;
+    const _replaceState = history.replaceState;
+
+    history.pushState = function() {
+      const ret = _pushState.apply(this, arguments);
+      setTimeout(rebindIfAttack, 0);
+      return ret;
+    };
+
+    history.replaceState = function() {
+      const ret = _replaceState.apply(this, arguments);
+      setTimeout(rebindIfAttack, 0);
+      return ret;
+    };
+
+    window.addEventListener('popstate', rebindIfAttack);
   }
 
   async function togglePanel() {
@@ -1143,10 +1204,12 @@ async function updateQuickAttackUI() {
     openAttackNewTab = JSON.parse(await GM.getValue("open_attack_new_tab", "false"));
     await GM.getValue("currentWarMode", "Peace");
     addCustomStyles();
+    applyHideClassesFromLocalStorage();
     await createChatButton();
     await initUI();
     setupIntervals();
     blockSearchBarInjection();
+    hookHistoryForAttackBindings();
   }
 
   async function initUI() {
