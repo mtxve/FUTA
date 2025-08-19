@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
 // @namespace    http://github.com/mtxve
-// @version      0.7.16a
+// @version      0.7.17a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -18,88 +18,8 @@
 // ==/UserScript==
 
 (function () {
-  let isFetchIntercepted = false;
-  let hospitalInjected = false;
-  const originalFetch = unsafeWindow.fetch;
-  let hospitalStatus = { isInHospital: false, until: 0 };
-  let lastAttackDataFetch = 0;
 
-  function enableFetchIntercept() {
-    if (isFetchIntercepted) return;
-    unsafeWindow.fetch = async (...args) => {
-      const [resource, config] = args;
-      const url = typeof resource === 'string' ? resource : resource.url;
-      if (!url.includes('?sid=attackData')) {
-        return originalFetch(resource, config);
-      }
-      const response = await originalFetch(resource, config);
-      const cloneJson = async () => {
-        let data = await response.clone().json();
-        const error = data?.DB?.error || '';
-        const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-        if (
-          error.includes('in hospital') ||
-          error.includes('unconscious') ||
-          error.includes('This fight no longer exists')
-        ) {
-          if (data?.DB?.defenderUser?.playername && !data.DB.defenderUser.playername.includes('[Hospital]')) {
-            data.DB.defenderUser.playername += ' [Hospital]';
-          }
-          hospitalStatus.isInHospital = true;
-          hospitalStatus.until = 0;
-          delete data.DB.error;
-          delete data.startErrorTitle;
-        } else {
-          hospitalStatus.isInHospital = false;
-          hospitalStatus.until = 0;
-        }
-        if (reactiveEnabled) {
-          updateStartFightButtonState();
-        }
-        return data;
-      };
-      response.json = cloneJson;
-      response.text = async () => JSON.stringify(await cloneJson());
-      return response;
-    };
-    isFetchIntercepted = true;
-  }
 
-  function disableFetchIntercept() {
-    if (!isFetchIntercepted) return;
-    unsafeWindow.fetch = originalFetch;
-    isFetchIntercepted = false;
-    hospitalStatus = { isInHospital: false, until: 0 };
-  }
-
-  async function updateStartFightButtonState() {
-    const btn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-    if (!btn) {
-      debugLog("Reactive Attack: Start Fight button not found for state update.");
-      return;
-    }
-    if (btn.textContent.trim() !== "Start Fight" && !btn.textContent.includes("Start Fight (")) {
-      debugLog("Reactive Attack: Button is not 'Start Fight', skipping update.");
-      return;
-    }
-    const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-    if (!reactiveEnabled) {
-      btn.disabled = false;
-      btn.classList.remove("disabled");
-      btn.textContent = "Start Fight";
-      return;
-    }
-    btn.style.minWidth = "175px";
-    if (hospitalStatus.isInHospital) {
-      btn.disabled = true;
-      btn.classList.add("disabled");
-      btn.textContent = "Start Fight (In Hospital)";
-    } else {
-      btn.disabled = false;
-      btn.classList.remove("disabled");
-      btn.textContent = "Start Fight";
-    }
-  }
 
   if (window.FUTA_ALREADY_LOADED) {
     console.log("[FUTA] Script already loaded, skipping...");
@@ -111,7 +31,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.16a",
+    VERSION: "0.7.17a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -495,7 +415,6 @@ function _updateSettingsAPIStatus(pingData) {
                   <option value="hospital">Hosp</option>
                   <option value="mug">Mug</option>
                 </select><br/>
-                <label><input type="checkbox" id="reactive-attack-toggle"> Reactive Attack</label><br/>
                 <label><input type="checkbox" id="open-attack-new-tab"> Open attack in new tab</label><br/>
                 <label><input type="checkbox" id="minimize-on-attack"> Minimize on attack page</label><br/>
                 <label><input type="checkbox" id="hide-primary"> Hide Primary</label><br/>
@@ -528,7 +447,6 @@ function _updateSettingsAPIStatus(pingData) {
     const chatGroup = await waitForElm("div[class^='group-chat-box']");
     chatGroup.after(wrapper);
     _updateSettingsAPIStatus(FUTA.sharedPingData);
-    // _updateBannerWithPingData(FUTA.sharedPingData);
 
     await setupPanelEventListeners();
     setupCollapsibleSections();
@@ -789,7 +707,6 @@ function _updateSettingsAPIStatus(pingData) {
     });
 
     const toggles = [
-      { id: "reactive-attack-toggle", key: "reactive_attack_enabled" },
       { id: "quick-attack-toggle", key: "quick_attack_enabled" },
       { id: "open-attack-new-tab", key: "open_attack_new_tab" },
       { id: "minimize-on-attack", key: "minimize_on_attack" },
@@ -814,27 +731,6 @@ function _updateSettingsAPIStatus(pingData) {
           await GM.setValue(key, el.checked);
           if (key === "open_attack_new_tab") openAttackNewTab = el.checked;
           if (key === "debug_mode") FUTA.debugEnabled = el.checked;
-          if (key === "reactive_attack_enabled") {
-            if (el.checked) {
-              enableFetchIntercept();
-              forceAttackInterfaceIfHospital();
-            } else {
-              disableFetchIntercept();
-            }
-            const btn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-            if (btn) {
-              if (el.checked) {
-                btn.disabled = true;
-                btn.classList.add("disabled");
-                btn.textContent = "Start Fight (Checking...)";
-                updateStartFightButtonState();
-              } else {
-                btn.disabled = false;
-                btn.classList.remove("disabled");
-                btn.textContent = "Start Fight";
-              }
-            }
-          }
         });
       }
     }
@@ -915,55 +811,10 @@ function _updateSettingsAPIStatus(pingData) {
     return null;
   }
 
-  async function reloadAttackData() {
-    const now = Date.now();
-    if (now - lastAttackDataFetch < 2000) {
-      debugLog("Attack data fetch debounced to prevent spam.");
-      return;
-    }
-    lastAttackDataFetch = now;
-
-    let targetID = window.attackData?.DB?.defenderUser?.userID;
-    if (!targetID) {
-      const urlParams = new URLSearchParams(window.location.search);
-      targetID = urlParams.get("user2ID");
-    }
-    if (!targetID) {
-      debugLog("No target ID found for attack data reload.");
-      return;
-    }
-
-    debugLog("Reloading attack data for target ID: " + targetID);
-    const attackDataUrl = `https://www.torn.com/loader.php?sid=attackData&user2ID=${targetID}`;
-    try {
-      const response = await fetch(attackDataUrl, {
-        credentials: "same-origin",
-        headers: {
-          "Accept": "application/json",
-          "X-Requested-With": "XMLHttpRequest"
-        }
-      });
-      if (!response.ok) {
-        debugLog(`Failed to fetch attack data: HTTP ${response.status} - ${response.statusText}`);
-        return;
-      }
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        const text = await response.text();
-        debugLog(`Attack data response is not JSON: Content-Type=${contentType}, Response=${text.substring(0, 50)}...`);
-        return;
-      }
-      const data = await response.json();
-      debugLog("Attack data reloaded: " + JSON.stringify(data));
-    } catch (err) {
-      debugLog("Error reloading attack data: " + err);
-    }
-  }
 
 async function enableQuickAttackAndHiding() {
   const settings = {
     quick: await GM.getValue("quick_attack_enabled", false),
-    reactive: await GM.getValue("reactive_attack_enabled", false),
     primary: await GM.getValue("hide_primary", false),
     secondary: await GM.getValue("hide_secondary", false),
     melee: await GM.getValue("hide_melee", false),
@@ -1081,7 +932,6 @@ async function enableQuickAttackAndHiding() {
 
               const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
               debugLog(`Weapon clicked, fight state: ${currentFightState}`);
-              if (settings.reactive) await reloadAttackData();
 
               if (currentFightState === "pre-fight" && settings.quick) {
                 const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
@@ -1112,8 +962,7 @@ async function enableQuickAttackAndHiding() {
 
 async function updateQuickAttackUI() {
   const action = await GM.getValue("quick_attack_action", "leave");
-  const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-  debugLog(`Quick Attack: Retrieved action setting: '${action}', Reactive Attack: ${reactiveEnabled}`);
+  debugLog(`Quick Attack: Retrieved action setting: '${action}'`);
 
   const postFightContainer = document.querySelector("div.dialogButtons___nX4Bz");
   if (!postFightContainer) {
@@ -1124,11 +973,6 @@ async function updateQuickAttackUI() {
   const buttons = postFightContainer.querySelectorAll("button.torn-btn");
   if (!buttons || buttons.length === 0) {
     debugLog("Quick Attack: No buttons found in post-fight container");
-    return null;
-  }
-
-  if (reactiveEnabled && hospitalStatus.isInHospital) {
-    debugLog("Quick Attack: Target is in hospital, aborting action due to Reactive Attack");
     return null;
   }
 
@@ -1167,18 +1011,45 @@ async function updateQuickAttackUI() {
 }
 
   async function executeAttackNotifier() {
-    const execEnabled = await GM.getValue("execute_enabled", true);
-    if (!execEnabled) return;
+    const execEnabled = await GM.getValue("execute_enabled", false);
+
+    const clearExecuteHighlight = () => {
+      const weaponSecond = document.getElementById('weapon_second');
+      if (weaponSecond) weaponSecond.style.background = '';
+    };
+
+    if (!execEnabled) {
+      clearExecuteHighlight();
+      return;
+    }
+
     const healthElements = document.querySelectorAll('[id^=player-health-value]');
-    if (!healthElements || healthElements.length < 2) return;
+    if (!healthElements || healthElements.length < 2) {
+      clearExecuteHighlight();
+      return;
+    }
+
     const parts = healthElements[1].innerText.split("/");
-    if (parts.length < 2) return;
+    if (parts.length < 2) {
+      clearExecuteHighlight();
+      return;
+    }
+
     const currentHealth = parseFloat(parts[0].replace(/,/g, ''));
     const maxHealth = parseFloat(parts[1].replace(/,/g, ''));
-    if (isNaN(currentHealth) || isNaN(maxHealth) || maxHealth === 0) return;
-    if (currentHealth / maxHealth <= Number((await GM.getValue("attack_execute", "60")) / 100)) {
+    if (isNaN(currentHealth) || isNaN(maxHealth) || maxHealth === 0) {
+      clearExecuteHighlight();
+      return;
+    }
+
+    const thresholdPct = Number(await GM.getValue("attack_execute", "60"));
+    const threshold = thresholdPct / 100;
+
+    if ((currentHealth / maxHealth) <= threshold) {
       const weaponSecond = document.getElementById('weapon_second');
       if (weaponSecond) weaponSecond.style.background = 'red';
+    } else {
+      clearExecuteHighlight();
     }
   }
 
@@ -1228,128 +1099,6 @@ async function updateQuickAttackUI() {
     }
   })();
 
-  async function disableStartFightButtonOnLoad() {
-    const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-    if (!reactiveEnabled) return;
-
-    const observer = new MutationObserver((mutations, obs) => {
-      const btn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-      if (btn && !btn.dataset.reactiveDisabled) {
-        btn.dataset.reactiveDisabled = "true";
-        btn.disabled = true;
-        btn.classList.add("disabled");
-        btn.textContent = "Start Fight (Checking...)";
-        debugLog("Reactive Attack: Start Fight button disabled on load");
-        obs.disconnect();
-        updateStartFightButtonState();
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
-
-  function isHospitalErrorPage() {
-    return document.querySelector('.info-msg-cont.red .msg')?.textContent.includes("This area is unavailable while you're in hospital");
-  }
-
-  function loadResources() {
-    const cssFiles = [
-      '/builds/attack/app.ddcc0e24bac85a4888b0.css',
-      '/css/style/events/halloween/halloween.css'
-    ];
-    cssFiles.forEach(css => {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = css;
-      document.head.appendChild(link);
-    });
-
-    const jsFiles = [
-      '/builds/attack/runtime.132f1b9e15de98f65113.js',
-      '/builds/attack/vendors.c89120d009fdb14b968b.js',
-      '/builds/attack/app.2fb65b1044cc67a16416.js'
-    ];
-    jsFiles.forEach(js => {
-      const script = document.createElement('script');
-      script.src = js;
-      script.type = 'text/javascript';
-      document.body.appendChild(script);
-    });
-  }
-
-  async function injectAttackInterface() {
-    const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-    if (!reactiveEnabled) {
-      debugLog("Reactive Attack not enabled, skipping attack interface injection.");
-      return;
-    }
-
-    const mainContainer = document.querySelector('#body > div.content.responsive-sidebar-container.logged-in');
-    if (!mainContainer) {
-      debugLog("Main container not found for attack interface injection.");
-      return;
-    }
-
-    debugLog("Injecting attack interface...");
-    mainContainer.innerHTML = '';
-    mainContainer.innerHTML = `
-      <div class="container" id="mainContainer">
-        <div id="sidebarroot"></div>
-        <div class="content-wrapper logged-out spring" role="main">
-          <div id="react-root">
-            <div class="coreWrap___LtSEy">
-              <div class="appHeaderWrapper___uyPti disableLinksRightMargin___gY7V5">
-                <svg width="0" height="0" style="position: absolute;">
-                  <defs>
-                    <linearGradient id="app-header-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stop-color="#666"></stop>
-                      <stop offset="100%" stop-color="#999"></stop>
-                    </linearGradient>
-                  </defs>
-                </svg>
-                <div class="topSection___U7sVi">
-                  <div class="titleContainer___QrlWP" data-userscript-alreadyfound="true">
-                    <h4 class="title___rhtB4">Attacking</h4>
-                  </div>
-                </div>
-                <hr class="delimiter___zFh2E">
-                <div class="bottomSection___ROxsQ"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    loadResources();
-    setTimeout(() => {
-      enableQuickAttackAndHiding();
-      disableStartFightButtonOnLoad();
-    }, 500);
-  }
-
-  async function forceAttackInterfaceIfHospital() {
-    const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-      if (!reactiveEnabled) return;
-
-      if (isHospitalErrorPage() && !hospitalStatus.isInHospital) {
-        debugLog("Hospital error detected, but target not in hospital. Forcing attack interface...");
-      await injectAttackInterface();
-        } else {
-        debugLog("Hospital error detected, but target is in hospital or Reactive Attack disabled. Skipping injection.");
-      }
-  }
-
-  async function monitorHospitalErrorPage() {
-    const observer = new MutationObserver(async (mutations, obs) => {
-      if (isHospitalErrorPage() && !hospitalInjected) {
-        hospitalInjected = true;
-        debugLog("Hospital error page detected; injecting attack interface once.");
-        await injectAttackInterface();
-        obs.disconnect();
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
 
   async function blockSearchBarInjection() {
     debugLog("Setting up observer to block tt-chat-filter within #futa-panel...");
@@ -1393,21 +1142,10 @@ async function updateQuickAttackUI() {
     FUTA.debugEnabled = await GM.getValue("debug_mode", false);
     openAttackNewTab = JSON.parse(await GM.getValue("open_attack_new_tab", "false"));
     await GM.getValue("currentWarMode", "Peace");
-    const reactiveEnabled = await GM.getValue("reactive_attack_enabled", false);
-    if (reactiveEnabled && window.location.href.includes("loader.php?sid=attack")) {
-      enableFetchIntercept();
-      await forceAttackInterfaceIfHospital();
-    } else {
-      disableFetchIntercept();
-    }
     addCustomStyles();
     await createChatButton();
     await initUI();
     setupIntervals();
-    if (window.location.href.includes("loader.php?sid=attack")) {
-      disableStartFightButtonOnLoad();
-    }
-    monitorHospitalErrorPage();
     blockSearchBarInjection();
   }
 
