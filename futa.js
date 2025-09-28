@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         Flatline's Ultimate Torn Assistant
+// @author       mtxve
 // @namespace    http://github.com/mtxve
-// @version      0.7.18a
+// @version      0.7.28a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -31,11 +32,13 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.18a",
+    VERSION: "0.7.28a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
-    chatButtonCreated: false
+    chatButtonCreated: false,
+    attackDebug: null,
+    executeThreshold: null
   };
 
   const FACTION_ENDPOINTS = {
@@ -44,8 +47,153 @@
     Lifeline: "http://46.202.179.157:8083"
   };
 
+  const FUTA_DRAG_MARGIN = 12;
+  let panelResizeListenerAttached = false;
+  const EXECUTE_PERK_CLASSES = [
+    "bonus-attachment-execute",
+  ];
+  const ASSASSINATE_PERK_CLASSES = [
+    "bonus-attachment-assassinate",
+  ];
+
+  function toBoolean(value) {
+    if (typeof value === 'string') return value === 'true';
+    return Boolean(value);
+  }
+
   function debugLog(msg) {
     if (FUTA.debugEnabled) console.log("[FUTA] => " + msg);
+  }
+
+  function ensureAttackDebugContext() {
+    if (!FUTA.attackDebug) {
+      FUTA.attackDebug = {
+        counter: 0,
+        active: false,
+        executeDetected: false,
+        assassinateDetected: false,
+        startedAt: 0,
+        context: "",
+        perkScanTimeout: null
+      };
+    }
+    return FUTA.attackDebug;
+  }
+
+  function extractExecuteThresholdFromDom() {
+    const weaponIds = ["weapon_main", "weapon_second", "weapon_melee", "weapon_temp"];
+    for (const weaponId of weaponIds) {
+      const host = document.getElementById(weaponId);
+      if (!host) continue;
+      for (const cls of EXECUTE_PERK_CLASSES) {
+        const perkEl = host.querySelector(`.${cls}`);
+        if (!perkEl) continue;
+        const desc = perkEl.getAttribute("data-bonus-attachment-description")
+          || perkEl.getAttribute("data-title")
+          || perkEl.getAttribute("title")
+          || (perkEl.dataset ? perkEl.dataset.bonusAttachmentDescription : "");
+        if (!desc) continue;
+        const match = desc.match(/([0-9]+(?:\.[0-9]+)?)%/);
+        if (match) {
+          const value = Number(match[1]);
+          if (!Number.isNaN(value)) return value;
+        }
+      }
+    }
+    return null;
+  }
+
+  function updateExecuteUI() {
+    const display = document.getElementById('execute-threshold-display');
+    if (display) {
+      if (FUTA.executeThreshold != null) {
+        display.textContent = `${FUTA.executeThreshold}%`;
+        display.title = 'Execute perk detected';
+      } else {
+        display.textContent = '--';
+        display.title = 'Execute perk not detected';
+      }
+    }
+    const toggle = document.getElementById('execute-toggle');
+    if (toggle) {
+      const shouldDisable = FUTA.executeThreshold == null;
+      toggle.disabled = shouldDisable;
+      if (shouldDisable) {
+        toggle.title = 'Execute perk not detected';
+      } else {
+        toggle.removeAttribute('title');
+      }
+    }
+  }
+
+  function detectWeaponPerk(perkClassList) {
+    if (!Array.isArray(perkClassList) || perkClassList.length === 0) return false;
+    const weaponIds = ["weapon_main", "weapon_second", "weapon_melee", "weapon_temp"];
+    return weaponIds.some((id) => {
+      const host = document.getElementById(id);
+      if (!host) return false;
+      return perkClassList.some((cls) => host.querySelector(`.${cls}`));
+    });
+  }
+
+  function refreshAttackDebugPerks(reason = "manual") {
+    if (!FUTA.debugEnabled) return;
+    const ctx = ensureAttackDebugContext();
+    const nextExecute = detectWeaponPerk(EXECUTE_PERK_CLASSES);
+    const nextAssassinate = detectWeaponPerk(ASSASSINATE_PERK_CLASSES);
+    const changed = nextExecute !== ctx.executeDetected || nextAssassinate !== ctx.assassinateDetected;
+    ctx.executeDetected = nextExecute;
+    ctx.assassinateDetected = nextAssassinate;
+    FUTA.executeThreshold = nextExecute ? extractExecuteThresholdFromDom() : null;
+    updateExecuteUI();
+
+    const thresholdText = FUTA.executeThreshold != null ? `${FUTA.executeThreshold}%` : (nextExecute ? 'unknown' : 'n/a');
+    if (changed || reason === "init" || reason === "post-init") {
+      debugLog(`[Debug] Perk scan (${reason}): execute=${nextExecute}, executeThreshold=${thresholdText}, assassinate=${nextAssassinate}`);
+    }
+  }
+
+  function initAttackDebug(context = "unknown") {
+    if (!FUTA.debugEnabled) return;
+    const ctx = ensureAttackDebugContext();
+    if (ctx.perkScanTimeout) {
+      clearTimeout(ctx.perkScanTimeout);
+      ctx.perkScanTimeout = null;
+    }
+    ctx.counter = 0;
+    ctx.active = true;
+    ctx.startedAt = Date.now();
+    ctx.context = context;
+    refreshAttackDebugPerks("init");
+    ctx.perkScanTimeout = setTimeout(() => refreshAttackDebugPerks("post-init"), 1000);
+    debugLog(`[Debug] Attack counter reset (${context}).`);
+  }
+
+  function incrementAttackDebugCounter(source = "unknown") {
+    if (!FUTA.debugEnabled) return;
+    const ctx = ensureAttackDebugContext();
+    if (!ctx.active) return;
+    ctx.counter += 1;
+    debugLog(`[Debug] Attack counter incremented (${source}): ${ctx.counter}`);
+  }
+
+  function finalizeAttackDebug(reason = "cleanup") {
+    if (!FUTA.debugEnabled) return;
+    const ctx = ensureAttackDebugContext();
+    if (!ctx.active && ctx.counter === 0) {
+      if (ctx.perkScanTimeout) {
+        clearTimeout(ctx.perkScanTimeout);
+        ctx.perkScanTimeout = null;
+      }
+      return;
+    }
+    debugLog(`[Debug] Attack counter finalized (${reason}): ${ctx.counter}`);
+    ctx.counter = 0;
+    ctx.active = false;
+    if (ctx.perkScanTimeout) {
+      clearTimeout(ctx.perkScanTimeout);
+      ctx.perkScanTimeout = null;
+    }
   }
 
   function waitForHead(callback) {
@@ -76,40 +224,635 @@
     });
   }
 
+  function clampToViewport(left, top, width, height) {
+    const margin = FUTA_DRAG_MARGIN;
+    const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - height - margin);
+    return {
+      left: Math.min(Math.max(left, margin), maxLeft),
+      top: Math.min(Math.max(top, margin), maxTop)
+    };
+  }
+
+  function makeMovable(element, { handle, storageKey, fallbackSize } = {}) {
+    if (!element || element.dataset.futaMovable === 'true') return;
+    const dragHandle = handle || element;
+    if (!dragHandle) return;
+    element.dataset.futaMovable = 'true';
+    element.dataset.futaPreventClick = 'false';
+    if (storageKey) element.dataset.futaMoveStorage = storageKey;
+
+    const getSize = () => {
+      const rect = element.getBoundingClientRect();
+      let width = rect.width;
+      let height = rect.height;
+      if (!width || !height) {
+        const computed = getComputedStyle(element);
+        width = parseFloat(computed.width) || fallbackSize?.width || element.offsetWidth || 0;
+        height = parseFloat(computed.height) || fallbackSize?.height || element.offsetHeight || 0;
+      }
+      if ((!width || !height) && fallbackSize) {
+        width = width || fallbackSize.width || 0;
+        height = height || fallbackSize.height || 0;
+      }
+      return {
+        width: Math.max(width || 1, 1),
+        height: Math.max(height || 1, 1)
+      };
+    };
+
+    const applyStoredPosition = () => {
+      if (!storageKey) return;
+      const saved = localStorage.getItem(storageKey);
+      if (!saved) return;
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.left !== 'number' || typeof parsed.top !== 'number') return;
+        const size = getSize();
+        const clamped = clampToViewport(parsed.left, parsed.top, size.width, size.height);
+        element.style.left = `${clamped.left}px`;
+        element.style.top = `${clamped.top}px`;
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
+        localStorage.setItem(storageKey, JSON.stringify(clamped));
+      } catch (err) {
+        debugLog(`Error applying stored position for ${storageKey}: ${err}`);
+      }
+    };
+
+    applyStoredPosition();
+
+    let pointerId = null;
+    let offsetX = 0;
+    let offsetY = 0;
+    let startX = 0;
+    let startY = 0;
+    let hasMoved = false;
+
+    const handlePointerDown = (event) => {
+      if (event.button !== 0) return;
+      pointerId = event.pointerId;
+      const rect = element.getBoundingClientRect();
+      startX = event.clientX;
+      startY = event.clientY;
+      offsetX = startX - rect.left;
+      offsetY = startY - rect.top;
+      hasMoved = false;
+      element.dataset.futaPreventClick = 'false';
+      if (dragHandle.setPointerCapture) {
+        dragHandle.setPointerCapture(pointerId);
+      }
+    };
+
+    const handlePointerMove = (event) => {
+      if (event.pointerId !== pointerId) return;
+      const deltaX = Math.abs(event.clientX - startX);
+      const deltaY = Math.abs(event.clientY - startY);
+      if (!hasMoved && (deltaX > 3 || deltaY > 3)) {
+        hasMoved = true;
+        element.classList.add('futa-dragging');
+        dragHandle.classList.add('grabbing');
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
+      }
+      if (!hasMoved) return;
+      event.preventDefault();
+      const newLeft = event.clientX - offsetX;
+      const newTop = event.clientY - offsetY;
+      const size = getSize();
+      const clamped = clampToViewport(newLeft, newTop, size.width, size.height);
+      element.style.left = `${clamped.left}px`;
+      element.style.top = `${clamped.top}px`;
+    };
+
+    const finalizeDrag = (event) => {
+      if (event.pointerId !== pointerId) return;
+      if (dragHandle.releasePointerCapture) {
+        try { dragHandle.releasePointerCapture(pointerId); } catch (e) { /* ignore */ }
+      }
+      if (hasMoved) {
+        const rect = element.getBoundingClientRect();
+        const size = getSize();
+        const clamped = clampToViewport(rect.left, rect.top, size.width, size.height);
+        element.style.left = `${clamped.left}px`;
+        element.style.top = `${clamped.top}px`;
+        if (storageKey) {
+          localStorage.setItem(storageKey, JSON.stringify(clamped));
+        }
+        element.dataset.futaPreventClick = 'true';
+        setTimeout(() => {
+          element.dataset.futaPreventClick = 'false';
+        }, 0);
+        event.preventDefault();
+        event.stopPropagation();
+      } else {
+        element.dataset.futaPreventClick = 'false';
+      }
+      element.classList.remove('futa-dragging');
+      dragHandle.classList.remove('grabbing');
+      pointerId = null;
+      hasMoved = false;
+    };
+
+    dragHandle.addEventListener('pointerdown', handlePointerDown);
+    dragHandle.addEventListener('pointermove', handlePointerMove);
+    dragHandle.addEventListener('pointerup', finalizeDrag);
+    dragHandle.addEventListener('pointercancel', finalizeDrag);
+
+    const suppressClickAfterDrag = (event) => {
+      if (element.dataset.futaPreventClick === 'true') {
+        event.preventDefault();
+        event.stopPropagation();
+        element.dataset.futaPreventClick = 'false';
+      }
+    };
+    dragHandle.addEventListener('click', suppressClickAfterDrag, true);
+
+    window.addEventListener('resize', applyStoredPosition);
+  }
+
+  function setPanelMinHeightFromSettings() {
+    const panel = document.getElementById('futa-panel');
+    if (!panel) return;
+    const content = panel.querySelector('.futa-content');
+    if (!content) return;
+
+    const viewportCap = Math.min(window.innerHeight - FUTA_DRAG_MARGIN * 2, 640);
+    const cappedPanel = Math.max(260, viewportCap);
+    panel.style.maxHeight = `${cappedPanel}px`;
+
+    const headerHeight = panel.querySelector('.futa-header')?.offsetHeight || 0;
+    const tabsHeight = panel.querySelector('.futa-tabs')?.offsetHeight || 0;
+    const bannerEl = panel.querySelector('#persistent-banner');
+    const bannerHeight = bannerEl && window.getComputedStyle(bannerEl).display !== 'none'
+      ? bannerEl.offsetHeight
+      : 0;
+
+    const chromeAllowance = headerHeight + tabsHeight + bannerHeight + 48;
+    const available = Math.max(220, cappedPanel - chromeAllowance);
+
+    content.style.minHeight = `${available}px`;
+    content.style.maxHeight = `${available}px`;
+  }
+
   function addCustomStyles() {
     debugLog("Injecting custom styles...");
     GM_addStyle(`
-      #futa-panel .chat-list-header__tab___okUFS { box-sizing: border-box !important; background: transparent linear-gradient(180deg, #555, #333) 0% 0% no-repeat padding-box !important; border: 0 !important; margin: 0 !important; padding: 7px 6px 8px 6px !important; display: flex !important; align-items: center !important; justify-content: center !important; }
-      #futa-panel .chat-list-header__tab___okUFS:hover { background: transparent linear-gradient(180deg, #555, #444) 0% 0% no-repeat padding-box !important; }
-      #futa-panel .chat-list-header__tabs___zL8JZ .chat-list-header__tab___okUFS.active-tab { background: transparent linear-gradient(0deg, #555, #333) 0% 0% no-repeat padding-box !important; border-bottom: none !important; }
-      body:not(.dark-mode) #futa-panel .chat-list-header__tab___okUFS { background: transparent linear-gradient(0deg, #ddd, #fff) 0% 0% no-repeat padding-box !important; }
-      body:not(.dark-mode) #futa-panel .chat-list-header__tab___okUFS:hover { background: transparent linear-gradient(0deg, #eee, #fff) 0% 0% no-repeat padding-box !important; }
-      body:not(.dark-mode) #futa-panel .chat-list-header__tabs___zL8JZ .chat-list-header__tab___okUFS.active-tab { background: transparent linear-gradient(180deg, #ddd, #fff) 0% 0% no-repeat padding-box !important; border-bottom: none !important; }
-      #futa-panel .settings-panel__section___Jszgh { margin-top: 0 !important; padding-top: 0 !important; }
-      #futa-panel .chat-list-header__text-action-wrapper___sWKdh { padding-bottom: 2px !important; }
-      #futa-panel .chat-list-header__tab___okUFS p { margin: 0 !important; line-height: 1.5 !important; }
-      body.dark-mode .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #222 !important; padding: 6px; border: 1px solid #444 !important; color: #fff !important; margin-bottom: 0 !important; }
-      body.dark-mode .collapsible-content { padding: 8px; border: 1px solid #444 !important; border-top: none !important; background: #2a2a2a !important; color: #fff !important; }
-      body:not(.dark-mode) .collapsible-header { cursor: pointer; font-weight: bold; margin: 8px 0; background: #f0f0f0 !important; padding: 6px; border: 1px solid #ccc !important; color: #000 !important; margin-bottom: 0 !important; }
-      body:not(.dark-mode) .collapsible-content { padding: 8px; border: 1px solid #ccc !important; border-top: none !important; background: #fff !important; color: #000 !important; }
-      #action-buttons { display: flex; flex-direction: column; align-items: center; margin-top: 10px; padding: 0 10px; }
-      #action-buttons .button-row { display: flex; flex-direction: row; justify-content: center; width: 100%; gap: 10px; margin-bottom: 5px; }
-      #action-buttons button { width: 100%; max-width: 120px; margin: 5px 0; }
-      #charlemagne-header { padding-top: 3px; padding-bottom: 3px; }
-      #persistent-banner { font-size: 12px; text-align: center; padding: 5px 0; border-top: 1px solid currentColor; display: none; }
-      #settings-api-status { margin-top: 10px; text-align: center; font-size: 12px; }
-      body.dark-mode #futa-panel { background-color: #2a2a2a !important; color: #fff !important; border: 1px solid #444 !important; }
-      body.dark-mode #futa-panel input[type="text"],
-      body.dark-mode #futa-panel input[type="number"],
-      body.dark-mode #futa-panel select,
-      body.dark-mode #futa-panel .collapsible-header { background: #222 !important; border-color: #444 !important; color: #fff !important; margin-bottom: 0 !important; }
-      body.dark-mode #futa-panel .collapsible-content { background: #2a2a2a !important; border-color: #444 !important; color: #fff !important; }
-      body:not(.dark-mode) #futa-panel { background-color: #f7f7f7 !important; color: #000 !important; border: 1px solid #ccc !important; }
-      body:not(.dark-mode) #futa-panel input[type="text"],
-      body:not(.dark-mode) #futa-panel input[type="number"],
-      body:not(.dark-mode) #futa-panel select,
-      body:not(.dark-mode) #futa-panel .collapsible-header { background: #f0f0f0 !important; border-color: #ccc !important; color: #000 !important; margin-bottom: 0 !important; }
-      body:not(.dark-mode) #futa-panel .collapsible-content { background: #fff !important; border-color: #ccc !important; color: #000 !important; }
+      #futa-toggle-button {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 2147483646;
+        border: none;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+        box-shadow: 0 12px 25px rgba(0, 0, 0, 0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        cursor: grab;
+        user-select: none;
+        touch-action: none;
+      }
+      #futa-toggle-button:focus-visible {
+        outline: 2px solid rgba(111, 147, 255, 0.85);
+        outline-offset: 2px;
+      }
+      #futa-toggle-button:hover {
+        transform: translateY(-1px);
+      }
+      body.dark-mode #futa-toggle-button {
+        background: linear-gradient(135deg, #6f5bff, #2f9dff);
+        color: #ffffff;
+      }
+      body:not(.dark-mode) #futa-toggle-button {
+        background: linear-gradient(135deg, #4756ff, #00b7ff);
+        color: #ffffff;
+      }
+      #futa-toggle-button.active {
+        box-shadow: 0 18px 28px rgba(87, 133, 255, 0.45);
+      }
+      #futa-toggle-button.futa-dragging {
+        cursor: grabbing;
+        transform: none !important;
+      }
+      #futa-toggle-button img {
+        width: 28px;
+        height: 28px;
+        display: block;
+        pointer-events: none;
+      }
+      /* Alert state: when there are active Charlemagne alerts use a yellow highlight (less orange) */
+      #futa-toggle-button.futa-alert-active {
+        background: linear-gradient(135deg, #ffd24a, #ffdb4d) !important;
+        color: #111 !important;
+        box-shadow: 0 18px 34px rgba(255, 198, 34, 0.35) !important;
+      }
+      #futa-toggle-button .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      #futa-panel {
+        position: fixed;
+        bottom: 88px;
+        right: 24px;
+        width: min(360px, calc(100vw - 40px));
+        max-height: min(80vh, 640px);
+        display: flex;
+        flex-direction: column;
+        border-radius: 16px;
+        background: #1e2333;
+        color: #f5f7ff;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        box-shadow: 0 24px 40px rgba(0, 0, 0, 0.45);
+        z-index: 2147483645;
+        font-family: "Roboto", "Open Sans", Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.45;
+        backdrop-filter: blur(14px);
+      }
+      body:not(.dark-mode) #futa-panel {
+        background: rgba(255, 255, 255, 0.98);
+        color: #1d1f28;
+        border: 1px solid rgba(16, 22, 48, 0.08);
+        box-shadow: 0 18px 36px rgba(25, 42, 89, 0.22);
+        backdrop-filter: unset;
+      }
+      #futa-panel[hidden] {
+        display: none !important;
+      }
+
+      #futa-panel .futa-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 18px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        cursor: grab;
+        user-select: none;
+        touch-action: none;
+      }
+      body:not(.dark-mode) #futa-panel .futa-header {
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+        background: linear-gradient(180deg, #eef2f6, #e6eaee);
+        color: #1d1f28;
+      }
+      #futa-panel .futa-header.grabbing {
+        cursor: grabbing;
+      }
+      #futa-panel.futa-dragging {
+        box-shadow: 0 30px 45px rgba(0, 0, 0, 0.55);
+      }
+      #futa-panel .futa-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      #futa-panel .futa-title img {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+      }
+      #futa-panel .futa-title-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-weight: 600;
+      }
+      #futa-panel .futa-title-primary {
+        font-size: 15px;
+        letter-spacing: 0.03em;
+      }
+      #futa-panel .futa-title-sub {
+        font-size: 11px;
+        opacity: 0.7;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      #futa-panel .futa-tabs {
+        display: flex;
+        gap: 6px;
+        padding: 10px 14px;
+        background: rgba(255, 255, 255, 0.04);
+      }
+      body:not(.dark-mode) #futa-panel .futa-tabs {
+        background: rgba(0, 0, 0, 0.04);
+      }
+      #futa-panel .futa-tab {
+        flex: 1;
+        border: none;
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: background 0.2s ease, transform 0.1s ease, color 0.2s ease;
+        background: transparent;
+        color: inherit;
+      }
+      #futa-panel .futa-tab:hover {
+        background: rgba(255, 255, 255, 0.12);
+        transform: translateY(-1px);
+      }
+      body:not(.dark-mode) #futa-panel .futa-tab:hover {
+        background: rgba(0, 0, 0, 0.08);
+      }
+      /* Active tab: subtle, theme-matching highlight */
+      #futa-panel .futa-tab.active {
+        background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+        color: inherit;
+        box-shadow: 0 6px 10px rgba(0, 0, 0, 0.18);
+        border: 1px solid rgba(255,255,255,0.04);
+      }
+
+      /* Quick highlight: subtle outline consistent with theme */
+      #futa-panel button.torn-btn.futa-quick-highlight {
+        box-shadow: 0 0 0 2px rgba(255,255,255,0.06), 0 6px 14px rgba(0,0,0,0.22);
+        border-color: rgba(255,255,255,0.12);
+      }
+
+      #futa-panel .futa-content {
+        padding: 16px 18px 18px;
+        overflow-y: auto;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      #futa-panel .futa-tab-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      #futa-panel .futa-tab-panel[hidden] {
+        display: none !important;
+      }
+
+      #check-summary-box {
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 14px;
+        background: rgba(0, 0, 0, 0.22);
+        font-size: 13px;
+        line-height: 1.55;
+        white-space: pre-line;
+      }
+      body:not(.dark-mode) #check-summary-box {
+        background: rgba(0, 0, 0, 0.04);
+        border-color: rgba(0, 0, 0, 0.1);
+      }
+
+      #action-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      #action-buttons .button-row {
+        display: flex;
+        gap: 10px;
+        align-items: stretch;
+      }
+      #action-buttons button {
+        flex: 1;
+        padding: 10px 12px;
+        border-radius: 12px;
+        font-size: 13px;
+        border-width: 2px !important;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      /* Standard button appearance (neutral for both themes) */
+      #futa-panel button.torn-btn {
+        background: rgba(255, 255, 255, 0.04);
+        color: inherit;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        transition: transform 0.1s ease, background 0.15s ease, opacity 0.12s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 12px;
+        border-radius: 10px;
+      }
+      #futa-panel button.torn-btn:hover:not([disabled]) {
+        background: rgba(255, 255, 255, 0.08);
+        transform: translateY(-1px);
+      }
+      body:not(.dark-mode) #futa-panel button.torn-btn {
+        background: rgba(0, 0, 0, 0.04);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+      }
+      body:not(.dark-mode) #futa-panel button.torn-btn:hover:not([disabled]) {
+        background: rgba(0, 0, 0, 0.06);
+      }
+      #futa-panel button.torn-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      /* Primary button variant (used for Save) */
+      #futa-panel button.torn-btn.primary {
+        background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
+        border: 1px solid rgba(255,255,255,0.12);
+        color: inherit;
+        font-weight: 700;
+      }
+      body:not(.dark-mode) #futa-panel button.torn-btn.primary {
+        background: linear-gradient(135deg, #f4f6f9, #eef2f6);
+        border: 1px solid rgba(0,0,0,0.08);
+        color: #111;
+      }
+
+      #futa-panel .futa-inline-field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: nowrap;
+        width: 100%;
+      }
+      #futa-panel .futa-inline-field .field-label {
+        font-size: 12px;
+        font-weight: 400;
+        white-space: nowrap;
+        margin-right: 4px;
+      }
+      #futa-panel .futa-inline-field input[type="text"],
+      #futa-panel .futa-inline-field select {
+        flex: 1 1 auto;
+        margin: 0;
+      }
+      #futa-panel .futa-inline-field button.torn-btn {
+        flex: 0 0 auto;
+        padding: 8px 14px;
+      }
+      #futa-panel .quick-attack-inline {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        font-weight: 400;
+        user-select: none;
+        padding: 0px 0;
+        margin: 0;
+      }
+      #futa-panel .quick-attack-inline span {
+        white-space: nowrap;
+      }
+      #futa-panel .quick-attack-inline input[type="checkbox"] {
+        margin: 0;
+      }
+      #futa-panel .quick-attack-inline select {
+        flex: 0 0 120px;
+        margin: 0;
+        font-weight: 300;
+      }
+
+      #futa-panel .collapsible {
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(0, 0, 0, 0.18);
+      }
+      body:not(.dark-mode) #futa-panel .collapsible {
+        background: rgba(0, 0, 0, 0.02);
+        border-color: rgba(0, 0, 0, 0.08);
+      }
+      #futa-panel .collapsible-header {
+        cursor: pointer;
+        font-weight: 600;
+        padding: 12px 16px;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        letter-spacing: 0.04em;
+      }
+      #futa-panel .collapsible-header::after {
+        content: "▾";
+        font-size: 14px;
+        opacity: 0.7;
+        transition: transform 0.2s ease;
+      }
+      #futa-panel .collapsible.collapsed .collapsible-header::after {
+        transform: rotate(-90deg);
+      }
+      #futa-panel .collapsible-content {
+        padding: 14px 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+        display: block;
+      }
+      body:not(.dark-mode) #futa-panel .collapsible-content {
+        border-top-color: rgba(0, 0, 0, 0.08);
+      }
+      #futa-panel .collapsible-content label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        line-height: 1.3;
+        padding: 0px 0;
+        margin: 0;
+        font-weight: 400;
+      }
+      #futa-panel .collapsible-content label + label {
+        margin-top: 2px;
+      }
+      #futa-panel .collapsible-content label input[type="checkbox"] {
+        margin: 0;
+      }
+      #futa-panel .collapsible-content input[type="text"],
+      #futa-panel .collapsible-content input[type="number"],
+      #futa-panel .collapsible-content select {
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(0, 0, 0, 0.20);
+        color: inherit;
+        transition: border 0.2s ease, box-shadow 0.2s ease;
+        margin: 4px 0 8px;
+      }
+      body:not(.dark-mode) #futa-panel .collapsible-content input[type="text"],
+      body:not(.dark-mode) #futa-panel .collapsible-content input[type="number"],
+      body:not(.dark-mode) #futa-panel .collapsible-content select {
+        background: rgba(255, 255, 255, 0.96);
+        border-color: rgba(0, 0, 0, 0.1);
+      }
+      #futa-panel .collapsible-content input[type="text"]:focus,
+      #futa-panel .collapsible-content input[type="number"]:focus,
+      #futa-panel .collapsible-content select:focus {
+        outline: none;
+        border-color: rgba(113, 159, 255, 0.8);
+        box-shadow: 0 0 0 3px rgba(113, 159, 255, 0.25);
+      }
+
+      #futa-panel #quick-attack-action {
+        padding: 2px 6px;
+        min-height: 26px;
+        line-height: 1.2;
+      }
+      #futa-panel .execute-inline span {
+        white-space: nowrap;
+        font-weight: 400;
+      }
+      #futa-panel .execute-threshold {
+        font-weight: 500;
+        padding: 0 6px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.06);
+        font-variant-numeric: tabular-nums;
+      }
+
+      #settings-api-status {
+        text-align: center;
+        font-size: 12px;
+        line-height: 1.6;
+        padding: 12px 16px;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      body:not(.dark-mode) #settings-api-status {
+        background: rgba(0, 0, 0, 0.04);
+        border-color: rgba(0, 0, 0, 0.08);
+      }
+
+      #persistent-banner {
+        font-size: 11px;
+        text-align: center;
+        padding: 10px 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        display: none;
+        background: rgba(255, 94, 94, 0.12);
+      }
+      body:not(.dark-mode) #persistent-banner {
+        border-top-color: rgba(0, 0, 0, 0.08);
+        background: rgba(255, 95, 95, 0.18);
+        color: #2d2d2d;
+      }
+      #persistent-banner strong {
+        font-weight: 700;
+      }
+
       /* Flicker-free hiding via root classes + :has() */
       html.futa-hide-primary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Primary"]) img { display: none !important; }
       html.futa-hide-secondary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Secondary"]) img { display: none !important; }
@@ -238,11 +981,6 @@
               if (!ignores.ignore_drug && cd.drug === 0) output.push("You're not currently on any drugs.");
               if (!ignores.ignore_booster && cd.booster === 0) output.push("You're not using your booster cooldown.");
               if (!ignores.ignore_medical && cd.medical === 0) output.push("You're not using your medical cooldown.");
-              if (!ignores.ignore_travel) {
-                if (icons && icons.icon71) output.push("You're currently traveling.");
-                else if (icons && icons.icon17) output.push("You're currently racing.");
-                else output.push("You're not currently racing or traveling.");
-              }
               let missionArray = [];
               if (missions && typeof missions === "object") {
                 for (let key in missions) {
@@ -252,6 +990,20 @@
               }
               const missionCount = missionArray.filter(m => m && m.status === "notAccepted").length;
               if (missionCount > 0) output.push(`You have ${missionCount} mission${missionCount > 1 ? "s" : ""} available.`);
+              try {
+                const travelData = data.travel || {};
+                if (!ignores.ignore_travel) {
+                    const isTravelingOrRacing = Boolean(
+                      (icons && icons.icon71) ||
+                      (icons && icons.icon17) ||
+                      (travelData && travelData.time_left && travelData.time_left > 0)
+                    );
+                    if (!isTravelingOrRacing) {
+                      output.push("You're not currently racing or traveling.");
+                    }
+                }
+              } catch (e) {
+              }
               const summary = output.join("\n") || "All checks passed.";
               localStorage.setItem("lastSummaryTimestamp", now.toString());
               localStorage.setItem("lastSummary", summary);
@@ -305,7 +1057,6 @@
   }
 
   function _updateBannerWithPingData(pingData) {
-  debugLog("_updateBannerWithPingData called with pingData: " + JSON.stringify(pingData));
   const storedCharlStatus = localStorage.getItem("charlemagne_status") || "No Connection";
   const { charlStatus, charlColor, tornStatus, tornColor } = pingData ? getConnectionStatus(pingData) : {
     charlStatus: storedCharlStatus,
@@ -313,6 +1064,16 @@
     tornStatus: FUTA.tornApiStatus,
     tornColor: FUTA.tornApiStatus === "Established" ? "green" : "red"
   };
+
+  const newBannerState = { charlStatus, charlColor, tornStatus, tornColor };
+  FUTA._lastDisplayedConnection = FUTA._lastDisplayedConnection || null;
+  // Skip DOM writes (and noisy logs) when nothing visible has changed.
+  if (FUTA._lastDisplayedConnection && JSON.stringify(FUTA._lastDisplayedConnection) === JSON.stringify(newBannerState)) {
+    debugLog("_updateBannerWithPingData skipped (no visible change)");
+    return;
+  }
+  FUTA._lastDisplayedConnection = newBannerState;
+
   const bannerEl = document.getElementById("persistent-banner");
   if (bannerEl) {
     bannerEl.innerHTML = `
@@ -323,7 +1084,7 @@
 }
 
 function _updateSettingsAPIStatus(pingData) {
-  debugLog("_updateSettingsAPIStatus called with pingData: " + JSON.stringify(pingData));
+  // Update the settings panel status area. Only redraw when something changed.
   const storedCharlStatus = localStorage.getItem("charlemagne_status") || "No Connection";
   const { charlStatus, charlColor, tornStatus, tornColor } = pingData ? getConnectionStatus(pingData) : {
     charlStatus: storedCharlStatus,
@@ -331,6 +1092,14 @@ function _updateSettingsAPIStatus(pingData) {
     tornStatus: FUTA.tornApiStatus,
     tornColor: FUTA.tornApiStatus === "Established" ? "green" : "red"
   };
+
+  const newSettingsState = { charlStatus, charlColor, tornStatus, tornColor, version: FUTA.VERSION };
+  FUTA._lastDisplayedSettings = FUTA._lastDisplayedSettings || null;
+  if (FUTA._lastDisplayedSettings && JSON.stringify(FUTA._lastDisplayedSettings) === JSON.stringify(newSettingsState)) {
+    debugLog("_updateSettingsAPIStatus skipped (no visible change)");
+    return;
+  }
+  FUTA._lastDisplayedSettings = newSettingsState;
 
   const statusEl = document.getElementById("settings-api-status");
   if (statusEl) {
@@ -343,29 +1112,36 @@ function _updateSettingsAPIStatus(pingData) {
 }
 
   async function createChatButton() {
-    if (document.getElementById("bust-tab-button")) {
-      debugLog("Chat button already exists, skipping...");
+    if (document.getElementById("futa-toggle-button")) {
       return;
     }
-    debugLog("Creating Charlemagne chat button...");
+    debugLog("Charlemagne has entered the building.");
     try {
-      const chatBtnRef = await waitForElm("button[class^='chat-setting-button']");
+      await waitForElm("body");
       const button = document.createElement("button");
-      button.id = "bust-tab-button";
-      button.className = chatBtnRef.className;
-      button.innerText = "Charlemagne";
-      button.onclick = togglePanel;
-      chatBtnRef.parentNode.insertBefore(button, chatBtnRef);
+      button.id = "futa-toggle-button";
+      button.type = "button";
+      button.setAttribute("aria-label", "Toggle Charlemagne panel");
+      button.innerHTML = '<img src="https://i.imgur.com/8ULhpqB.png" alt="" aria-hidden="true" /><span class="sr-only">Charlemagne</span>';
+      button.addEventListener("click", () => {
+        if (button.dataset.futaPreventClick === 'true') return;
+        togglePanel();
+      });
+      document.body.appendChild(button);
+      makeMovable(button, { storageKey: 'futa_toggle_position', fallbackSize: { width: 64, height: 64 } });
       FUTA.chatButtonCreated = true;
-      await createOrUpdateChatPanel();
+      const panel = await createOrUpdateChatPanel();
+      if (panel) {
+        syncToggleButtonState(!panel.hidden);
+      }
     } catch (e) {
-      debugLog("Error creating chat button, retrying: " + e);
+      debugLog("Error creating toggle button, retrying: " + e);
       setTimeout(createChatButton, 500);
     }
   }
 
   async function createChatPanel() {
-    debugLog("Creating new Charlemagne panel...");
+    await waitForElm("body");
     const savedKey = await GM.getValue("api_key", "");
     const wasOpen = await GM.getValue("charlemagne_panel_open", false);
     const cachedSummary = localStorage.getItem("lastSummary") || "Loading status...";
@@ -385,105 +1161,123 @@ function _updateSettingsAPIStatus(pingData) {
     }
 
     const wrapper = document.createElement("div");
-    wrapper.className = "chat-app__panel___wh6nM";
     wrapper.id = "futa-panel";
     wrapper.hidden = !wasOpen;
     wrapper.innerHTML = `
-      <div class="chat-tab___gh1rq">
-        <div class="chat-list-header__text-action-wrapper___sWKdh" role="button" id="charlemagne-header">
-          <div class="chat-list-header__text-wrapper___R6R0A">
-            <img src="https://i.imgur.com/8ULhpqB.png" alt="frog" style="width: 26px; height: 26px; filter: drop-shadow(0 0 2px black);" />
-            <p class="typography___Dc5WV body3 bold color-white">Charlemagne</p>
+      <div class="futa-header">
+        <div class="futa-title" id="charlemagne-header">
+          <img src="https://i.imgur.com/8ULhpqB.png" alt="Charlemagne frog" />
+          <div class="futa-title-text">
+            <span class="futa-title-primary">Charlemagne</span>
+            <span class="futa-title-sub">Flatline's Ultimate Torn Assistant</span>
           </div>
         </div>
-        <div class="chat-list-header__tabs___zL8JZ">
-          <button type="button" class="chat-list-header__tab___okUFS" id="tab-main">
-            <p class="typography___Dc5WV body4 bold">Main</p>
-          </button>
-          <button type="button" class="chat-list-header__tab___okUFS" id="tab-about">
-            <p class="typography___Dc5WV body4 bold">WHACK (WIP)</p>
-          </button>
-          <button type="button" class="chat-list-header__tab___okUFS" id="tab-settings">
-            <p class="typography___Dc5WV body4 bold">Settings</p>
-          </button>
-        </div>
-        <div class="chat-tab-content___jNmk8">
-          <div id="content-main" hidden>
-            <div id="check-summary-box" style="padding: 10px; font-size:13px; border-radius:4px; white-space:pre-line; border:1px solid #444; background:inherit; color:inherit">
-              ${cachedSummary}
+      </div>
+      <div class="futa-tabs" role="tablist">
+        <button type="button" class="futa-tab" id="tab-main" role="tab" aria-controls="content-main">Main</button>
+        <button type="button" class="futa-tab" id="tab-settings" role="tab" aria-controls="content-settings">Settings</button>
+      </div>
+      <div class="futa-content">
+        <section id="content-main" class="futa-tab-panel" role="tabpanel" hidden>
+          <div id="check-summary-box">
+            ${cachedSummary}
+          </div>
+          <div id="action-buttons">
+            <div class="button-row">
+              <button id="request-bust" class="torn-btn" style="border-color: ${modes.request_bust.enabled ? 'gold' : 'grey'};" ${modes.request_bust.enabled ? '' : 'disabled'}>Request Bust</button>
+              <button id="request-revive" class="torn-btn" style="border-color: ${modes.request_revive.enabled ? 'green' : 'grey'};" ${modes.request_revive.enabled ? '' : 'disabled'}>Request Revive</button>
             </div>
-            <div id="action-buttons">
-              <div class="button-row">
-                <button id="request-bust" class="torn-btn" style="border-color: ${modes.request_bust.enabled ? 'gold' : 'grey'};" ${modes.request_bust.enabled ? '' : 'disabled'}>Request Bust</button>
-                <button id="request-revive" class="torn-btn" style="border-color: ${modes.request_revive.enabled ? 'green' : 'grey'};" ${modes.request_revive.enabled ? '' : 'disabled'}>Request Revive</button>
-              </div>
-              <div class="button-row">
-                <button id="big-boi-mode" class="torn-btn" style="border-color: ${modes.big_boi_mode.enabled ? (modes.big_boi_mode.active ? 'green' : 'red') : 'grey'};" ${modes.big_boi_mode.enabled ? '' : 'disabled'} data-enabled="${modes.big_boi_mode.active}">Big Boi Mode</button>
-                <button id="assist-mode" class="torn-btn" style="border-color: ${modes.assist_mode.enabled ? (modes.assist_mode.active ? 'green' : 'red') : 'grey'};" ${modes.assist_mode.enabled ? '' : 'disabled'} data-enabled="${modes.assist_mode.active}">Assist Mode</button>
+            <div class="button-row">
+              <button id="big-boi-mode" class="torn-btn" style="border-color: ${modes.big_boi_mode.enabled ? (modes.big_boi_mode.active ? 'green' : 'red') : 'grey'};" ${modes.big_boi_mode.enabled ? '' : 'disabled'} data-enabled="${modes.big_boi_mode.active}">Big Boi Mode</button>
+              <button id="assist-mode" class="torn-btn" style="border-color: ${modes.assist_mode.enabled ? (modes.assist_mode.active ? 'green' : 'red') : 'grey'};" ${modes.assist_mode.enabled ? '' : 'disabled'} data-enabled="${modes.assist_mode.active}">Assist Mode</button>
+            </div>
+          </div>
+        </section>
+        <section id="content-settings" class="futa-tab-panel" role="tabpanel" hidden>
+          <div class="collapsible">
+            <div class="collapsible-header">API Key:</div>
+            <div class="collapsible-content">
+              <div class="futa-inline-field">
+                <input type="text" id="api-key" name="apikey" placeholder="Enter API Key" value="${savedKey}">
+                <button id="save-api-key" class="torn-btn primary">Save</button>
               </div>
             </div>
           </div>
-          <div id="content-about" hidden></div>
-          <div id="content-settings" hidden>
-            <div class="collapsible">
-              <div class="collapsible-header">API Key:</div>
-              <div class="collapsible-content">
-                <div style="display: flex; align-items: center;">
-                  <input type="text" id="api-key" name="apikey" style="outline: none; box-shadow: none; padding: 5px; border: 1px solid #ccc;" placeholder="Enter API Key" value="${savedKey}">
-                  <button id="save-api-key" class="torn-btn" style="border-color: green; margin-left: 8px;">Save</button>
-                </div>
-              </div>
-            </div>
-            <div class="collapsible">
-              <div class="collapsible-header">Attack Settings:</div>
-              <div class="collapsible-content">
-                <label><input type="checkbox" id="quick-attack-toggle"> Quick Attack</label>
+          <div class="collapsible">
+            <div class="collapsible-header">Attack Settings:</div>
+            <div class="collapsible-content">
+              <label class="quick-attack-inline">
+                <input type="checkbox" id="quick-attack-toggle">
+                <span>Quick Attack:</span>
                 <select id="quick-attack-action">
                   <option value="leave">Leave</option>
                   <option value="hospital">Hosp</option>
                   <option value="mug">Mug</option>
-                </select><br/>
-                <label><input type="checkbox" id="open-attack-new-tab"> Open attack in new tab</label><br/>
-                <label><input type="checkbox" id="minimize-on-attack"> Minimize on attack page</label><br/>
-                <label><input type="checkbox" id="hide-primary"> Hide Primary</label><br/>
-                <label><input type="checkbox" id="hide-secondary"> Hide Secondary</label><br/>
-                <label><input type="checkbox" id="hide-melee"> Hide Melee</label><br/>
-                <label><input type="checkbox" id="hide-temp"> Hide Temp</label><br/>
-                <label style="display:flex; align-items:center; gap:8px;">
-                  <input type="checkbox" id="execute-toggle" />
-                  Execute:
-                  <input type="number" id="attack-execute" style="width:30px;" min="0" max="99" value="${await GM.getValue('attack_execute', '60')}" />
-                </label><br/>
-              </div>
+                </select>
+              </label>
+              <label><input type="checkbox" id="open-attack-new-tab"> Open attack in new tab</label>
+              <label><input type="checkbox" id="minimize-on-attack"> Minimize on attack page</label>
+              <label><input type="checkbox" id="hide-primary"> Hide Primary</label>
+              <label><input type="checkbox" id="hide-secondary"> Hide Secondary</label>
+              <label><input type="checkbox" id="hide-melee"> Hide Melee</label>
+              <label><input type="checkbox" id="hide-temp"> Hide Temp</label>
+              <input type="checkbox" id="execute-toggle" />
+              <span>Execute:</span>
+              <span id="execute-threshold-display" class="execute-threshold">--</span>
+              <label title="WIP"><input type="checkbox" id="assassinate-toggle" disabled> Assassinate <small style="margin-left:6px;color:#888">(WIP)</small></label>
             </div>
-            <div class="collapsible">
-              <div class="collapsible-header">User Settings:</div>
-              <div class="collapsible-content">
-                <label><input type="checkbox" id="ignore-bank"> ignore bank check</label><br/>
-                <label><input type="checkbox" id="ignore-medical"> ignore medical check</label><br/>
-                <label><input type="checkbox" id="ignore-booster"> ignore booster check</label><br/>
-                <label><input type="checkbox" id="ignore-drug"> ignore drug check</label><br/>
-                <label><input type="checkbox" id="ignore-travel"> ignore travel/racing check</label><br/>
-                <label><input type="checkbox" id="debugging-toggle"> debugging</label>
-              </div>
-            </div>
-            <div id="settings-api-status"></div>
           </div>
-        </div>
-        <div id="persistent-banner"></div>
-      </div>`;
-    const chatGroup = await waitForElm("div[class^='group-chat-box']");
-    chatGroup.after(wrapper);
+          <div class="collapsible">
+            <div class="collapsible-header">User Settings:</div>
+            <div class="collapsible-content">
+              <label><input type="checkbox" id="charlemagne-alerts"> Charlemagne Alerts</label>
+              <label><input type="checkbox" id="ignore-bank"> ignore bank check</label>
+              <label><input type="checkbox" id="ignore-medical"> ignore medical check</label>
+              <label><input type="checkbox" id="ignore-booster"> ignore booster check</label>
+              <label><input type="checkbox" id="ignore-drug"> ignore drug check</label>
+              <label><input type="checkbox" id="ignore-travel"> ignore travel/racing check</label>
+              <label><input type="checkbox" id="debugging-toggle"> debugging</label>
+            </div>
+          </div>
+          <div id="settings-api-status"></div>
+        </section>
+      </div>
+      <div id="persistent-banner"></div>
+    `;
+    document.body.appendChild(wrapper);
+    makeMovable(wrapper, {
+      handle: wrapper.querySelector('.futa-header'),
+      storageKey: 'futa_panel_position',
+      fallbackSize: { width: 360, height: 500 }
+    });
+    setPanelMinHeightFromSettings();
+    if (!panelResizeListenerAttached) {
+      panelResizeListenerAttached = true;
+      window.addEventListener('resize', () => setPanelMinHeightFromSettings());
+    }
     _updateSettingsAPIStatus(FUTA.sharedPingData);
 
     await setupPanelEventListeners();
     setupCollapsibleSections();
-    monitorChatGroup();
+    // restore alerts setting and run initial check
+    const alertsEnabled = await GM.getValue('charlemagne_alerts_enabled', false);
+    FUTA.charlemagneAlertsEnabled = Boolean(alertsEnabled);
+    if (FUTA.charlemagneAlertsEnabled) {
+      await checkAlerts();
+    }
     const lastTab = await GM.getValue(FUTA.tabStateKey, "content-main");
-    const tabMap = { "content-main": "main", "content-about": "about", "content-settings": "settings" };
+    const tabMap = { "content-main": "main", "content-settings": "settings" };
     const initialTab = tabMap[lastTab] || "main";
     debugLog(`Initial tab set to: ${initialTab}`);
     await _updatePanelContent(initialTab);
+    if (!wrapper.hidden) {
+      setPanelMinHeightFromSettings();
+      requestAnimationFrame(() => setPanelMinHeightFromSettings());
+    } else {
+      setPanelMinHeightFromSettings();
+    }
+    syncToggleButtonState(!wrapper.hidden);
+    return wrapper;
   }
 
   async function updateChatPanel() {
@@ -495,17 +1289,15 @@ function _updateSettingsAPIStatus(pingData) {
     if (panel) {
       debugLog("Updating existing Charlemagne panel...");
       await updateChatPanel();
-      const chatGroup = await waitForElm("div[class^='group-chat-box']");
-      chatGroup.after(panel);
-    } else {
-      await createChatPanel();
+      return panel;
     }
+    return await createChatPanel();
   }
 
   async function _updatePanelContent(tabId) {
     if (!tabId) {
       const lastTab = await GM.getValue(FUTA.tabStateKey, "content-main");
-      const tabMap = { "content-main": "main", "content-about": "about", "content-settings": "settings" };
+      const tabMap = { "content-main": "main", "content-settings": "settings" };
       tabId = tabMap[lastTab] || "main";
     }
     debugLog(`Updating panel content for tab: ${tabId}`);
@@ -516,23 +1308,17 @@ function _updateSettingsAPIStatus(pingData) {
       return;
     }
 
-    const tabsContainer = futaPanel.querySelector('.chat-list-header__tabs___zL8JZ');
+    const tabsContainer = futaPanel.querySelector('.futa-tabs');
     if (!tabsContainer) {
-      debugLog('Error: .chat-list-header__tabs___zL8JZ not found in #futa-panel');
+      debugLog('Error: .futa-tabs not found in #futa-panel');
       return;
     }
 
-    const tabs = ['main', 'about', 'settings'];
+    const tabs = ['main', 'settings'];
     tabs.forEach(tab => {
       const tabElement = tabsContainer.querySelector(`#tab-${tab}`);
       if (!tabElement) {
         debugLog(`Error: Tab element #tab-${tab} not found`);
-        return;
-      }
-
-      const pElement = tabElement.querySelector('p');
-      if (!pElement) {
-        debugLog(`Error: <p> element not found in #tab-${tab}`);
         return;
       }
 
@@ -542,28 +1328,19 @@ function _updateSettingsAPIStatus(pingData) {
         return;
       }
 
-      if (tab === tabId) {
-        tabElement.classList.add('active-tab');
-        pElement.classList.remove('color-peopleTab');
-        pElement.classList.add('color-peopleTabActive');
-        contentElement.hidden = false;
-        debugLog(`Activated #tab-${tab} with classes: ${tabElement.className}`);
-        debugLog(`<p> classes in #tab-${tab}: ${pElement.className}`);
-        debugLog(`Showing content-${tab}`);
-      } else {
-        tabElement.classList.remove('active-tab');
-        pElement.classList.remove('color-peopleTabActive');
-        pElement.classList.add('color-peopleTab');
-        contentElement.hidden = true;
-        debugLog(`Deactivated #tab-${tab} with classes: ${tabElement.className}`);
-        debugLog(`<p> classes in #tab-${tab}: ${pElement.className}`);
-        debugLog(`Hiding content-${tab}`);
-      }
+      const isActive = tab === tabId;
+      tabElement.classList.toggle('active', isActive);
+      tabElement.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      contentElement.hidden = !isActive;
+      contentElement.setAttribute('aria-hidden', (!isActive).toString());
     });
-    const tabMap = { "main": "content-main", "about": "content-about", "settings": "content-settings" };
+    const tabMap = { "main": "content-main", "settings": "content-settings" };
     if (tabMap[tabId]) {
       await GM.setValue(FUTA.tabStateKey, tabMap[tabId]);
     }
+    const forceMeasure = tabId === 'settings';
+    setPanelMinHeightFromSettings();
+    requestAnimationFrame(() => setPanelMinHeightFromSettings());
   }
 
   async function setupPanelEventListeners() {
@@ -580,7 +1357,7 @@ function _updateSettingsAPIStatus(pingData) {
 
     const handleTabSwitch = debounce(async (tabId) => {
       debugLog(`handleTabSwitch called for tab: ${tabId}`);
-      const tabMap = { "tab-main": "main", "tab-about": "about", "tab-settings": "settings" };
+      const tabMap = { "tab-main": "main", "tab-settings": "settings" };
       if (!tabMap[tabId]) {
         debugLog(`Invalid tabId: ${tabId}`);
         return;
@@ -590,13 +1367,13 @@ function _updateSettingsAPIStatus(pingData) {
 
     panel.addEventListener("click", async (event) => {
       const target = event.target;
-      const tabButton = target.closest("#tab-main, #tab-about, #tab-settings");
+      const tabButton = target.closest(".futa-tab");
       if (tabButton) {
         await handleTabSwitch(tabButton.id);
-      } else if (target.id === "charlemagne-header") {
-        panel.hidden = true;
-        await GM.setValue("charlemagne_panel_open", false);
-      } else if (target.id === "save-api-key") {
+        return;
+      }
+
+      if (target.closest("#save-api-key")) {
         const key = document.getElementById("api-key").value.trim();
         if (!key) return alert("Please enter an API key.");
         await GM.setValue("api_key", key);
@@ -651,7 +1428,7 @@ function _updateSettingsAPIStatus(pingData) {
           },
           onerror: () => alert("❌ Error connecting to Charlemagne server. API key saved locally but not submitted.")
         });
-      } else if (target.id === "request-bust") {
+      } else if (target.closest("#request-bust")) {
         const key = await GM.getValue("api_key", "");
         const faction = await GM.getValue("user_faction", "Flatline");
         const baseEndpoint = FACTION_ENDPOINTS[faction] || FACTION_ENDPOINTS.Flatline;
@@ -664,9 +1441,9 @@ function _updateSettingsAPIStatus(pingData) {
           onload: () => alert("✅ Bust request sent!"),
           onerror: () => alert("❌ Error sending bust request.")
         });
-      } else if (target.id === "request-revive") {
+      } else if (target.closest("#request-revive")) {
         alert("Request Revive placeholder. Functionality coming soon.");
-      } else if (target.id === "big-boi-mode") {
+      } else if (target.closest("#big-boi-mode")) {
         const bigBoiBtn = document.getElementById("big-boi-mode");
         if (bigBoiBtn.disabled) return;
         const current = bigBoiBtn.getAttribute("data-enabled") === "true";
@@ -699,7 +1476,16 @@ function _updateSettingsAPIStatus(pingData) {
             alert("❌ Error updating Big Boi Mode on server.");
           }
         });
-      } else if (target.id === "assist-mode") {
+      } else if (target.closest('#charlemagne-alerts')) {
+        const chk = document.getElementById('charlemagne-alerts');
+        await GM.setValue('charlemagne_alerts_enabled', chk.checked);
+        FUTA.charlemagneAlertsEnabled = Boolean(chk.checked);
+        if (FUTA.charlemagneAlertsEnabled) {
+          checkAlerts();
+        } else {
+          updateToggleBadge(0);
+        }
+      } else if (target.closest("#assist-mode")) {
         const assistBtn = document.getElementById("assist-mode");
         const current = assistBtn.getAttribute("data-enabled") === "true";
         const newState = !current;
@@ -732,9 +1518,10 @@ function _updateSettingsAPIStatus(pingData) {
           }
         });
       }
+      setPanelMinHeightFromSettings();
     });
-
-    const toggles = [
+  await GM.setValue('assassinate', false);
+  const toggles = [
       { id: "quick-attack-toggle", key: "quick_attack_enabled" },
       { id: "open-attack-new-tab", key: "open_attack_new_tab" },
       { id: "minimize-on-attack", key: "minimize_on_attack" },
@@ -749,7 +1536,8 @@ function _updateSettingsAPIStatus(pingData) {
       { id: "ignore-booster", key: "ignore_booster" },
       { id: "ignore-drug", key: "ignore_drug" },
       { id: "ignore-travel", key: "ignore_travel" },
-      { id: "debugging-toggle", key: "debug_mode" }
+      { id: "debugging-toggle", key: "debug_mode" },
+      { id: "charlemagne-alerts", key: "charlemagne_alerts_enabled" }
     ];
     for (const { id, key } of toggles) {
       const el = document.getElementById(id);
@@ -766,7 +1554,22 @@ function _updateSettingsAPIStatus(pingData) {
           if (key === 'hide_melee') { localStorage.setItem('futa_hide_melee', String(el.checked)); toggleRootHideClass(document.documentElement, 'melee', el.checked); }
           if (key === 'hide_temp') { localStorage.setItem('futa_hide_temp', String(el.checked)); toggleRootHideClass(document.documentElement, 'temp', el.checked); }
           if (key === "open_attack_new_tab") openAttackNewTab = el.checked;
+          if (key === "minimize_on_attack") {
+            minimizeOnAttack = el.checked;
+            if (minimizeOnAttack) maybeMinimizePanelForAttack('settings-toggle');
+          }
+          if (key === "quick_attack_enabled") {
+            void updateQuickAttackUI();
+          }
           if (key === "debug_mode") FUTA.debugEnabled = el.checked;
+          if (key === "charlemagne_alerts_enabled") {
+            FUTA.charlemagneAlertsEnabled = Boolean(el.checked);
+            if (FUTA.charlemagneAlertsEnabled) {
+              checkAlerts();
+            } else {
+              updateToggleBadge(0);
+            }
+          }
         });
       }
     }
@@ -780,41 +1583,251 @@ function _updateSettingsAPIStatus(pingData) {
     const quickAttackActionSelect = document.getElementById("quick-attack-action");
     if (quickAttackActionSelect) {
       quickAttackActionSelect.value = await GM.getValue("quick_attack_action", "leave");
-      quickAttackActionSelect.addEventListener("change", () => GM.setValue("quick_attack_action", quickAttackActionSelect.value));
+      quickAttackActionSelect.addEventListener("change", () => {
+        GM.setValue("quick_attack_action", quickAttackActionSelect.value);
+        void updateQuickAttackUI();
+      });
     }
   }
 
+  async function checkAlerts() {
+    try {
+      const alerts = [];
+      const api_key = await GM.getValue('api_key', '');
+      const ignores = {
+        ignore_travel: await GM.getValue('ignore_travel', false),
+        ignore_drug: await GM.getValue('ignore_drug', false),
+        ignore_booster: await GM.getValue('ignore_booster', false),
+        ignore_medical: await GM.getValue('ignore_medical', false)
+      };
+
+      if (api_key) {
+        const summary = await fetchCheckSummary();
+        const lines = (summary || '').split(/\n+/).map(l => l.trim()).filter(Boolean);
+  // Nerve refill
+  const nerveLine = lines.find(l => /nerve/i.test(l) && /refill/i.test(l));
+  if (nerveLine && /haven't used/i.test(nerveLine)) alerts.push("You haven't used your nerve refill today.");
+        // Drugs
+        if (!ignores.ignore_drug && lines.some(l => /not currently on any drugs/i.test(l) || /no drugs/i.test(l))) {
+          alerts.push("You're not currently on any drugs.");
+        }
+        // Booster
+        if (!ignores.ignore_booster && lines.some(l => /not using your booster cooldown/i.test(l) || /booster/i.test(l) && /0\b/.test(l))) {
+          alerts.push("You're not using your booster cooldown.");
+        }
+        // Medical
+        if (!ignores.ignore_medical && lines.some(l => /not using your medical cooldown/i.test(l) || /medical/i.test(l) && /0\b/.test(l))) {
+          alerts.push("You're not using your medical cooldown.");
+        }
+        // Travel / Racing: only alert when the API explicitly reports NOT traveling/racing
+        if (!ignores.ignore_travel) {
+          const negativeTravelLine = lines.find(l => /not currently racing or traveling|not currently racing|not currently traveling|not currently travelling/i.test(l));
+          if (negativeTravelLine) {
+            alerts.push("You aren't currently racing/travelling");
+          }
+        }
+      } else {
+        const nerveEl = document.querySelector('#nerve-refill-status, .refills, [data-refills]');
+        if (!nerveEl || /haven'?t used your nerve refill/i.test(nerveEl.innerText || '')) {
+          alerts.push("You haven't used your nerve refill today.");
+        }
+        if (!ignores.ignore_drug) {
+          const drugEl = document.querySelector('.drug-status, #drug-status, .drug-info');
+          if (!drugEl || /not currently on any drugs|no drugs active/i.test(drugEl.innerText || '')) alerts.push("You're not currently on any drugs.");
+        }
+        if (!ignores.ignore_booster) {
+          const boosterEl = document.querySelector('.booster-cooldown, #booster-cooldown, .booster-info');
+          if (!boosterEl || /booster ready|no booster/i.test(boosterEl.innerText || '')) alerts.push("You're not using your booster cooldown.");
+        }
+        if (!ignores.ignore_medical) {
+          const medicalEl = document.querySelector('.medical-cooldown, #medical-cooldown, .medical-info');
+          if (!medicalEl || /medical ready|no medical/i.test(medicalEl.innerText || '')) alerts.push("You're not using your medical cooldown.");
+        }
+      }
+      const ignoreTravel = await GM.getValue('ignore_travel', false);
+      if (!api_key && !ignoreTravel) {
+        let isTravelling = false;
+        try {
+          if (window.topBannerInitData && window.topBannerInitData.user && window.topBannerInitData.user.state) {
+            isTravelling = Boolean(window.topBannerInitData.user.state.isTravelling || window.topBannerInitData.user.state.isTravelling === true || window.topBannerInitData.user.state.isTravelling === 'true');
+          }
+        } catch (e) {
+          isTravelling = false;
+        }
+        if (!isTravelling) {
+          const bodyTrav = document.body && (document.body.getAttribute('data-traveling') === 'true' || document.body.getAttribute('data-travelling') === 'true');
+          if (!bodyTrav) alerts.push("You aren't currently racing/travelling");
+        }
+      }
+      const uniqueAlerts = Array.from(new Set(alerts.map(a => (a || '').trim()))).filter(Boolean);
+  FUTA._lastAlerts = uniqueAlerts;
+  updateToggleBadge(uniqueAlerts.length);
+      const summaryBox = document.getElementById('check-summary-box');
+      if (summaryBox) {
+        if (uniqueAlerts.length === 0) {
+          summaryBox.textContent = 'All good — no Charlemagne alerts.';
+        } else {
+          summaryBox.innerHTML = uniqueAlerts.map(a => `<div class="futa-alert">${a}</div>`).join('');
+        }
+      }
+    } catch (e) {
+      debugLog('checkAlerts error: ' + e);
+    }
+  }
+
+  function updateToggleBadge(count) {
+    const btn = document.getElementById('futa-toggle-button');
+    if (!btn) return;
+    const existing = btn.querySelector('.futa-alert-badge');
+    if (existing) existing.remove();
+    btn.classList.toggle('futa-alert-active', Boolean(count && count > 0));
+    if (!count || count === 0) return;
+    const badge = document.createElement('span');
+    badge.className = 'futa-alert-badge';
+    badge.textContent = count > 9 ? '9+' : String(count);
+    badge.style.position = 'absolute';
+    badge.style.right = '2px';
+    badge.style.top = '2px';
+    badge.style.background = '#ff0000ff';
+    badge.style.color = 'white';
+    badge.style.borderRadius = '8px';
+    badge.style.padding = '2px 5px';
+    badge.style.fontSize = '11px';
+    badge.style.zIndex = '9999';
+    btn.appendChild(badge);
+  }
+
   function setupCollapsibleSections() {
-    document.querySelectorAll('.collapsible-header').forEach(header => {
-      const sectionKey = 'collapsible_' + header.innerText.trim().replace(/\s+/g, '_');
+    document.querySelectorAll('#futa-panel .collapsible').forEach(section => {
+      const header = section.querySelector('.collapsible-header');
+      const content = section.querySelector('.collapsible-content');
+      if (!header || !content) return;
+      const sectionKey = 'collapsible_' + header.textContent.trim().replace(/\s+/g, '_');
       GM.getValue(sectionKey, "block").then(savedDisplay => {
-        header.nextElementSibling.style.display = savedDisplay;
+        content.style.display = savedDisplay;
+        section.classList.toggle('collapsed', savedDisplay === "none");
       });
       header.addEventListener('click', () => {
-        const content = header.nextElementSibling;
-        content.style.display = (content.style.display === "none") ? "block" : "none";
-        GM.setValue(sectionKey, content.style.display);
+        const isHidden = content.style.display === "none";
+        const newDisplay = isHidden ? "block" : "none";
+        content.style.display = newDisplay;
+        section.classList.toggle('collapsed', newDisplay === "none");
+        GM.setValue(sectionKey, newDisplay);
+        setPanelMinHeightFromSettings();
       });
     });
   }
 
-  function monitorChatGroup() {
-    const observer = new MutationObserver(() => {
-      const chatGroup = document.querySelector("div[class^='group-chat-box']");
-      const panel = document.getElementById("futa-panel");
-      const button = document.getElementById("bust-tab-button");
-      if (chatGroup && panel && chatGroup.nextElementSibling?.id !== "futa-panel") {
-        debugLog("Chat group changed, reattaching panel...");
-        chatGroup.after(panel);
-        _updatePanelContent();
+  const FUTA_ATTACK_SESSION_KEY = 'futa_attack_tab';
+  const FUTA_ATTACK_REDIRECT_KEY = 'futa_attack_redirect';
+  let lastHandledAttackNavigation = { url: null, time: 0 };
+
+  function normalizeAttackUrl(url) {
+    if (!url) return null;
+    try {
+      const absolute = new URL(url, window.location.origin);
+      if (absolute.pathname !== '/loader.php') return null;
+      if (absolute.searchParams.get('sid') !== 'attack') return null;
+      if (!absolute.searchParams.get('user2ID')) return null;
+      absolute.hash = '';
+      return absolute.href;
+    } catch (err) {
+      debugLog('normalizeAttackUrl error: ' + err);
+      return null;
+    }
+  }
+
+  function isAttackUrl(url) {
+    return Boolean(normalizeAttackUrl(url));
+  }
+
+  function markAttackTabIfExpected() {
+    try {
+      const payload = localStorage.getItem(FUTA_ATTACK_REDIRECT_KEY);
+      if (!payload) return;
+      const parsed = JSON.parse(payload);
+      if (!parsed || typeof parsed.url !== 'string' || typeof parsed.time !== 'number') {
+        localStorage.removeItem(FUTA_ATTACK_REDIRECT_KEY);
+        return;
       }
-      if (chatGroup && !button) {
-        debugLog("Chat button missing, recreating...");
-        FUTA.chatButtonCreated = false;
-        createChatButton();
+      const normalizedCurrent = normalizeAttackUrl(window.location.href);
+      if (normalizedCurrent && normalizedCurrent === parsed.url && (Date.now() - parsed.time) < 5000) {
+        sessionStorage.setItem(FUTA_ATTACK_SESSION_KEY, 'true');
+        localStorage.removeItem(FUTA_ATTACK_REDIRECT_KEY);
+        debugLog('Marked current tab as attack target.');
       }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    } catch (err) {
+      debugLog('markAttackTabIfExpected error: ' + err);
+      localStorage.removeItem(FUTA_ATTACK_REDIRECT_KEY);
+    }
+  }
+
+  function rememberAttackRedirect(targetUrl) {
+    try {
+      localStorage.setItem(FUTA_ATTACK_REDIRECT_KEY, JSON.stringify({ url: targetUrl, time: Date.now() }));
+    } catch (err) {
+      debugLog('rememberAttackRedirect error: ' + err);
+    }
+  }
+
+  function isCurrentTabAttackTarget() {
+    return sessionStorage.getItem(FUTA_ATTACK_SESSION_KEY) === 'true';
+  }
+
+  async function maybeMinimizePanelForAttack(reason = 'unknown') {
+    if (!minimizeOnAttack) return;
+    const isAttack = window.location.href.includes('loader.php?sid=attack');
+    if (!isAttack) return;
+    debugLog(`Attempting to minimize panel due to attack page (${reason}).`);
+    const panel = document.getElementById('futa-panel');
+    if (panel) {
+      if (!panel.hidden) {
+        await togglePanel(false);
+      } else {
+        await GM.setValue('charlemagne_panel_open', false);
+      }
+    } else {
+      await GM.setValue('charlemagne_panel_open', false);
+    }
+  }
+
+  function maybeHandleAttackNavigation(rawUrl, source = 'unknown') {
+    if (!openAttackNewTab) return false;
+    const normalized = normalizeAttackUrl(rawUrl);
+    if (!normalized) return false;
+    if (isCurrentTabAttackTarget()) {
+      debugLog(`Attack navigation ignored in designated attack tab (${source}).`);
+      return false;
+    }
+    const now = Date.now();
+    if (lastHandledAttackNavigation.url === normalized && (now - lastHandledAttackNavigation.time) < 500) {
+      debugLog(`Attack navigation throttled for ${normalized} (${source}).`);
+      return true;
+    }
+    lastHandledAttackNavigation = { url: normalized, time: now };
+    debugLog(`Opening attack in new tab from ${source}: ${normalized}`);
+    rememberAttackRedirect(normalized);
+    openAttack(normalized, { forceNewTab: true });
+    return true;
+  }
+
+  function setupAttackLinkInterception() {
+    const handler = (event) => {
+      if (!openAttackNewTab) return;
+      if (event.defaultPrevented) return;
+      if (event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+      if (!anchor) return;
+      const href = anchor.getAttribute('href') || '';
+      const url = anchor.href || href;
+      if (!isAttackUrl(url)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      try { event.stopImmediatePropagation(); } catch (_err) { /* ignore */ }
+      maybeHandleAttackNavigation(url, 'click');
+    };
+    document.addEventListener('click', handler, true);
   }
 
   function hookHistoryForAttackBindings() {
@@ -827,13 +1840,15 @@ function _updateSettingsAPIStatus(pingData) {
     const _pushState = history.pushState;
     const _replaceState = history.replaceState;
 
-    history.pushState = function() {
+    history.pushState = function(state, title, url) {
+      if (maybeHandleAttackNavigation(url, 'pushState')) return;
       const ret = _pushState.apply(this, arguments);
       setTimeout(rebindIfAttack, 0);
       return ret;
     };
 
-    history.replaceState = function() {
+    history.replaceState = function(state, title, url) {
+      if (maybeHandleAttackNavigation(url, 'replaceState')) return;
       const ret = _replaceState.apply(this, arguments);
       setTimeout(rebindIfAttack, 0);
       return ret;
@@ -842,12 +1857,28 @@ function _updateSettingsAPIStatus(pingData) {
     window.addEventListener('popstate', rebindIfAttack);
   }
 
-  async function togglePanel() {
-    const panel = document.getElementById("futa-panel");
-    if (panel) {
-      const newState = !panel.hidden;
-      panel.hidden = newState;
-      await GM.setValue("charlemagne_panel_open", !newState);
+  function syncToggleButtonState(isOpen) {
+    const button = document.getElementById("futa-toggle-button");
+    if (!button) return;
+    button.classList.toggle("active", isOpen);
+    button.setAttribute("aria-pressed", isOpen ? "true" : "false");
+    button.setAttribute("title", isOpen ? "Hide Charlemagne" : "Show Charlemagne");
+  }
+
+  async function togglePanel(forceOpen) {
+    let panel = document.getElementById("futa-panel");
+    if (!panel) {
+      panel = await createOrUpdateChatPanel();
+    }
+    if (!panel) return;
+
+    const shouldOpen = typeof forceOpen === "boolean" ? forceOpen : panel.hidden;
+    panel.hidden = !shouldOpen;
+    await GM.setValue("charlemagne_panel_open", shouldOpen);
+    syncToggleButtonState(shouldOpen);
+    if (shouldOpen) {
+      setPanelMinHeightFromSettings();
+      requestAnimationFrame(() => setPanelMinHeightFromSettings());
     }
   }
 
@@ -881,6 +1912,25 @@ async function enableQuickAttackAndHiding() {
     melee: await GM.getValue("hide_melee", false),
     temp: await GM.getValue("hide_temp", false),
     assassinate: await GM.getValue("assassinate", false)
+  };
+
+  const hiddenWeaponTypes = new Set();
+  let hiddenWeaponLogTimer = null;
+  let lastHiddenWeaponSignature = "";
+  const scheduleHiddenWeaponsLog = () => {
+    if (!FUTA.debugEnabled || hiddenWeaponTypes.size === 0) return;
+    if (hiddenWeaponLogTimer) clearTimeout(hiddenWeaponLogTimer);
+    hiddenWeaponLogTimer = setTimeout(() => {
+      hiddenWeaponLogTimer = null;
+      if (!FUTA.debugEnabled || hiddenWeaponTypes.size === 0) return;
+      const names = Array.from(hiddenWeaponTypes)
+        .sort()
+        .map((type) => type.charAt(0).toUpperCase() + type.slice(1));
+      const signature = names.join('|');
+      if (signature === lastHiddenWeaponSignature) return;
+      lastHiddenWeaponSignature = signature;
+      debugLog(`[Debug] Hid weapons: ${names.join(', ')}`);
+    }, 150);
   };
 
   let fightState = "pre-fight";
@@ -932,6 +1982,9 @@ async function enableQuickAttackAndHiding() {
   };
 
   if (isAttackPage()) {
+    if (FUTA.debugEnabled) {
+      initAttackDebug('attack-page-entry');
+    }
     debugLog("On attack page, setting up fight state observer...");
     let prevState = "pre-fight";
     hasAssassinated = false;
@@ -939,6 +1992,9 @@ async function enableQuickAttackAndHiding() {
       const newState = determineFightState();
       if (newState === "pre-fight" && prevState !== "pre-fight") {
         hasAssassinated = false;
+        if (FUTA.debugEnabled) {
+          initAttackDebug('state-pre-fight');
+        }
       }
       if (settings.assassinate && prevState !== "in-fight" && newState === "in-fight" && !hasAssassinated) {
         debugLog("Assassinate: first in-fight detected, triggering perk weapon");
@@ -949,13 +2005,121 @@ async function enableQuickAttackAndHiding() {
           wrapper.click();
         }
       }
+      if (newState === "post-fight") {
+        void updateQuickAttackUI();
+        if (FUTA.debugEnabled) {
+          finalizeAttackDebug('post-fight');
+        }
+      }
+      if (newState === "in-fight" && FUTA.debugEnabled) {
+        refreshAttackDebugPerks('state-in-fight');
+      }
       prevState = newState;
     });
     stateObserver.observe(document.body, { childList: true, subtree: true });
   } else {
+    if (FUTA.debugEnabled) {
+      finalizeAttackDebug('not-attack-page');
+    }
     debugLog("Not on attack page, skipping fight state observer setup.");
   }
+  async function bindWeaponWrapper(wrapper) {
+    try {
+      if (!wrapper || wrapper.dataset.quickBound) return;
+      wrapper.dataset.quickBound = "true";
+      const marker = wrapper.querySelector(".topMarker___OjRyU");
+      const type = await getWeaponType(marker?.id || "");
+      const img = wrapper.querySelector("img");
+      if (img && type && settings[type]) {
+        const name = img.alt || type.charAt(0).toUpperCase() + type.slice(1);
+        img.style.display = "none";
+        const label = document.createElement("div");
+        label.className = "hide-label";
+        label.textContent = name;
+        label.style.color = "#aaa";
+        label.style.textAlign = "center";
+        label.style.fontSize = "14px";
+        label.style.margin = "6px";
+        label.style.fontWeight = "bold";
+        if (!img.parentNode.contains(label)) img.parentNode.appendChild(label);
+        if (!hiddenWeaponTypes.has(type)) {
+          hiddenWeaponTypes.add(type);
+          scheduleHiddenWeaponsLog();
+        }
+      }
+      if (FUTA.debugEnabled) {
+        refreshAttackDebugPerks('weapon-bind');
+      }
 
+      wrapper.addEventListener("click", async (e) => {
+        if (!e.isTrusted) return;
+        const now = Date.now();
+        if (now - lastClickTime < 300) return;
+        lastClickTime = now;
+
+        const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
+        debugLog(`Weapon clicked, fight state: ${currentFightState}`);
+
+        if (currentFightState === "in-fight") {
+          incrementAttackDebugCounter('weapon-click');
+        }
+
+        try {
+          const isExecEnabled = await GM.getValue('execute_enabled', false);
+          if (isExecEnabled && currentFightState === "in-fight") {
+            const execActive = await isExecuteActive();
+            if (execActive) {
+              const highlighted = Array.from(document.querySelectorAll('.weaponWrapper___h3buK'))
+                .find(w => {
+                  const classStr = w.className || '';
+                  const hasGlow = /\bglow[-_\w]*\b/.test(classStr);
+                  const topMarkerActive = !!w.querySelector('.topMarker___OjRyU[aria-pressed="true"], .topMarker___OjRyU.active, .topMarker___OjRyU[data-selected="true"]');
+                  const isHighlighted = hasGlow || topMarkerActive || document.activeElement && w.contains(document.activeElement);
+                  if (!isHighlighted) return false;
+                  return !!w.querySelector(EXECUTE_PERK_CLASSES.map(c=>'.'+c).join(','));
+                });
+              if (highlighted && highlighted !== wrapper) {
+                debugLog('Redirecting click to highlighted Execute weapon');
+                highlighted.click();
+                e.stopPropagation();
+                e.preventDefault();
+                return;
+              }
+            }
+          }
+        } catch (ex) {
+          debugLog('Error while attempting execute-redirect: ' + ex);
+        }
+
+        if (currentFightState === "pre-fight" && settings.quick) {
+          const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
+          if (startBtn) {
+            debugLog("Starting fight via weapon click");
+            startBtn.click();
+          } else {
+            debugLog("Start Fight button not found");
+          }
+        } else if (currentFightState === "post-fight" && settings.quick) {
+          debugLog("Weapon clicked in post-fight state, triggering Quick Attack action");
+          const targetButton = await updateQuickAttackUI();
+          if (targetButton) {
+            debugLog(`Quick Attack: Clicking button '${targetButton.innerText}'`);
+            targetButton.click();
+          } else {
+            debugLog("Quick Attack: No target button found to click");
+          }
+        }
+      });
+    } catch (err) {
+      debugLog('bindWeaponWrapper failed: ' + err);
+    }
+  }
+  try {
+    const existingWrappers = Array.from(document.querySelectorAll('.weaponWrapper___h3buK'));
+    existingWrappers.forEach(w => void bindWeaponWrapper(w));
+  } catch (e) {
+    debugLog('Error binding existing weapon wrappers: ' + e);
+  }
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
@@ -964,56 +2128,16 @@ async function enableQuickAttackAndHiding() {
           ? [node]
           : node.querySelectorAll?.(".weaponWrapper___h3buK");
         if (wrappers && wrappers.length > 0) {
-          wrappers.forEach(async (wrapper) => {
-            if (wrapper.dataset.quickBound) return;
-            wrapper.dataset.quickBound = "true";
-            const marker = wrapper.querySelector(".topMarker___OjRyU");
-            const type = await getWeaponType(marker?.id || "");
-            const img = wrapper.querySelector("img");
-            if (img && type && settings[type]) {
-              const name = img.alt || type.charAt(0).toUpperCase() + type.slice(1);
-              img.style.display = "none";
-              const label = document.createElement("div");
-              label.className = "hide-label";
-              label.textContent = name;
-              label.style.color = "#aaa";
-              label.style.textAlign = "center";
-              label.style.fontSize = "14px";
-              label.style.margin = "6px";
-              label.style.fontWeight = "bold";
-              img.parentNode.appendChild(label);
-              debugLog(`Hid ${type} weapon image and added label: ${name}`);
-            }
-
-            wrapper.addEventListener("click", async (e) => {
-              if (!e.isTrusted) return;
-              const now = Date.now();
-              if (now - lastClickTime < 300) return;
-              lastClickTime = now;
-
-              const currentFightState = isAttackPage() ? determineFightState() : "pre-fight";
-              debugLog(`Weapon clicked, fight state: ${currentFightState}`);
-
-              if (currentFightState === "pre-fight" && settings.quick) {
-                const startBtn = document.querySelector(`[class*='dialogButtons_'] button.torn-btn[type="submit"]`);
-                if (startBtn) {
-                  debugLog("Starting fight via weapon click");
-                  startBtn.click();
-                } else {
-                  debugLog("Start Fight button not found");
-                }
-              } else if (currentFightState === "post-fight" && settings.quick) {
-                debugLog("Weapon clicked in post-fight state, triggering Quick Attack action");
-                const targetButton = await updateQuickAttackUI();
-                if (targetButton) {
-                  debugLog(`Quick Attack: Clicking button '${targetButton.innerText}'`);
-                  targetButton.click();
-                } else {
-                  debugLog("Quick Attack: No target button found to click");
-                }
-              }
-            });
+          wrappers.forEach((wrapper) => {
+            void bindWeaponWrapper(wrapper).catch(e => debugLog('bindWeaponWrapper error: ' + e));
           });
+        }
+
+        const postFightNode = node.classList?.contains("dialogButtons___nX4Bz")
+          ? node
+          : node.querySelector?.("div.dialogButtons___nX4Bz");
+        if (postFightNode) {
+          void updateQuickAttackUI();
         }
       });
     });
@@ -1022,6 +2146,7 @@ async function enableQuickAttackAndHiding() {
 }
 
 async function updateQuickAttackUI() {
+  const quickEnabled = await GM.getValue("quick_attack_enabled", false);
   const action = await GM.getValue("quick_attack_action", "leave");
   debugLog(`Quick Attack: Retrieved action setting: '${action}'`);
 
@@ -1037,9 +2162,11 @@ async function updateQuickAttackUI() {
     return null;
   }
 
+  buttons.forEach(btn => btn.classList.remove("futa-quick-highlight"));
+
   const actionMap = {
     leave: ["leave"],
-    hospital: ["hospitalize", "hosp"],
+    hospital: ["hospitalize", "hospitalise", "hospital", "hosp"],
     mug: ["mug"]
   };
 
@@ -1054,13 +2181,25 @@ async function updateQuickAttackUI() {
   Array.from(buttons).forEach(btn => {
     const btnText = btn.innerText.trim();
     const btnTextLower = btnText.toLowerCase();
+    const normalized = btnTextLower.replace(/\s+/g, ' ');
     debugLog(`Quick Attack: Checking button with text: '${btnText}'`);
 
-    if (expectedActions.includes(btnTextLower)) {
+    const matched = expectedActions.some(expected => {
+      if (normalized === expected) return true;
+      if (normalized.startsWith(expected + ' ')) return true;
+      if (normalized.startsWith(expected + ':')) return true;
+      return false;
+    });
+
+    if (matched) {
       debugLog(`Quick Attack: Match found for '${btnText}'`);
       targetButton = btn;
     }
   });
+
+  if (quickEnabled && targetButton) {
+    targetButton.classList.add("futa-quick-highlight");
+  }
 
   if (targetButton) {
     debugLog(`Quick Attack: Identified target button with text '${targetButton.innerText}'`);
@@ -1114,12 +2253,42 @@ async function updateQuickAttackUI() {
     }
   }
 
-  let openAttackNewTab = false;
+  async function isExecuteActive() {
+    try {
+      const execEnabled = await GM.getValue("execute_enabled", false);
+      if (!execEnabled) return false;
+      const healthElements = document.querySelectorAll('[id^=player-health-value]');
+      if (!healthElements || healthElements.length < 2) return false;
+      const parts = healthElements[1].innerText.split("/");
+      if (parts.length < 2) return false;
+      const currentHealth = parseFloat(parts[0].replace(/,/g, ''));
+      const maxHealth = parseFloat(parts[1].replace(/,/g, ''));
+      if (isNaN(currentHealth) || isNaN(maxHealth) || maxHealth === 0) return false;
+      const thresholdPct = Number(await GM.getValue("attack_execute", "60"));
+      const threshold = thresholdPct / 100;
+      return (currentHealth / maxHealth) <= threshold;
+    } catch (e) {
+      debugLog('isExecuteActive error: ' + e);
+      return false;
+    }
+  }
 
-  function openAttack(url) {
-    console.log("openAttackNewTab =", openAttackNewTab, "URL =", url);
-    if (openAttackNewTab) GM.openInTab(url, { active: true });
-    else window.location.href = url;
+  let openAttackNewTab = false;
+  let minimizeOnAttack = false;
+
+  function openAttack(url, { forceNewTab = false } = {}) {
+    const shouldOpenNewTab = forceNewTab || openAttackNewTab;
+    console.log("openAttackNewTab =", openAttackNewTab, "forceNewTab =", forceNewTab, "URL =", url);
+    if (shouldOpenNewTab) {
+      try {
+        GM.openInTab(url, { active: true });
+      } catch (err) {
+        debugLog('GM.openInTab failed, falling back to window.open: ' + err);
+        window.open(url, '_blank', 'noopener');
+      }
+    } else {
+      window.location.href = url;
+    }
   }
 
   (function heartbeat() {
@@ -1156,59 +2325,23 @@ async function updateQuickAttackUI() {
     if (isAttackPage) {
       sendHeartbeat();
       setInterval(sendHeartbeat, ATTACK_PING_INTERVAL);
-      window.addEventListener("pagehide", () => {});
+      window.addEventListener("pagehide", () => finalizeAttackDebug('pagehide'));
     }
   })();
 
-
-  async function blockSearchBarInjection() {
-    debugLog("Setting up observer to block tt-chat-filter within #futa-panel...");
-    try {
-      const futaPanel = await waitForElm("#futa-panel");
-      if (!futaPanel) {
-        debugLog("Error: #futa-panel not found in the DOM, cannot block tt-chat-filter.");
-        return;
-      }
-
-      const existingFilter = futaPanel.querySelector("div.tt-chat-filter");
-      if (existingFilter) {
-        debugLog("Found existing tt-chat-filter in #futa-panel, removing...");
-        existingFilter.remove();
-      }
-
-      const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-          mutation.addedNodes.forEach((node) => {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              const filterDiv = node.classList?.contains("tt-chat-filter")
-                ? node
-                : node.querySelector?.("div.tt-chat-filter");
-              if (filterDiv) {
-                debugLog("Detected tt-chat-filter injection in #futa-panel, removing...");
-                filterDiv.remove();
-              }
-            }
-          });
-        });
-      });
-
-      observer.observe(futaPanel, { childList: true, subtree: true });
-      debugLog("Observer set up to block tt-chat-filter within #futa-panel.");
-    } catch (e) {
-      debugLog("Error setting up tt-chat-filter blocker: " + e);
-    }
-  }
-
   async function initialize() {
     FUTA.debugEnabled = await GM.getValue("debug_mode", false);
-    openAttackNewTab = JSON.parse(await GM.getValue("open_attack_new_tab", "false"));
+    openAttackNewTab = toBoolean(await GM.getValue("open_attack_new_tab", false));
+    minimizeOnAttack = toBoolean(await GM.getValue("minimize_on_attack", false));
+    markAttackTabIfExpected();
+    await maybeMinimizePanelForAttack('initialize');
     await GM.getValue("currentWarMode", "Peace");
     addCustomStyles();
     applyHideClassesFromLocalStorage();
+    setupAttackLinkInterception();
     await createChatButton();
     await initUI();
     setupIntervals();
-    blockSearchBarInjection();
     hookHistoryForAttackBindings();
   }
 
@@ -1228,7 +2361,7 @@ async function updateQuickAttackUI() {
     await updateAllStatuses();
     await createChatButton();
     await waitForElm("body").then(() => enableQuickAttackAndHiding());
-    if (await GM.getValue("minimize_on_attack", false)) {
+    if (minimizeOnAttack) {
       waitForKeyElements("a.profile-button-attack", (node) => {
         node.removeAttribute("onclick");
         node.onclick = (e) => {
@@ -1251,7 +2384,19 @@ async function updateQuickAttackUI() {
 
   function setupIntervals() {
     setInterval(updateAllStatuses, FUTA.UPDATE_INTERVAL);
-    setInterval(executeAttackNotifier, 5000);
+    setInterval(executeAttackNotifier, 500);
+    const healthObserver = new MutationObserver(() => executeAttackNotifier());
+    const healthEl = document.querySelector('[id^=player-health-value]');
+    if (healthEl) {
+      healthObserver.observe(healthEl, { childList: true, characterData: true, subtree: true });
+    } else {
+      waitForKeyElements('[id^=player-health-value]', (node) => {
+        healthObserver.observe(node, { childList: true, characterData: true, subtree: true });
+      }, true);
+    }
+    setInterval(() => {
+      if (FUTA.charlemagneAlertsEnabled) checkAlerts();
+    }, 30000);
   }
 
   function waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector) {
@@ -1267,6 +2412,8 @@ async function updateQuickAttackUI() {
     }
     setTimeout(() => waitForKeyElements(selector, actionFunction, bWaitOnce, iframeSelector), 300);
   }
+
+  window.addEventListener('beforeunload', () => finalizeAttackDebug('beforeunload'));
 
   waitForHead(initialize);
 })();
