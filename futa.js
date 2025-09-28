@@ -2,7 +2,7 @@
 // @name         Flatline's Ultimate Torn Assistant
 // @author       mtxve
 // @namespace    http://github.com/mtxve
-// @version      0.7.28a
+// @version      0.7.29a
 // @updateURL    https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @downloadURL  https://raw.githubusercontent.com/mtxve/FUTA/master/futa.js
 // @description  Flatline Family MegaScript
@@ -32,7 +32,7 @@
     tabStateKey: "charlemagne_last_tab",
     pingPromise: null,
     UPDATE_INTERVAL: 30000,
-    VERSION: "0.7.28a",
+    VERSION: "0.7.29a",
     debugEnabled: false,
     sharedPingData: {},
     tornApiStatus: "Connecting...",
@@ -63,6 +63,13 @@
 
   function debugLog(msg) {
     if (FUTA.debugEnabled) console.log("[FUTA] => " + msg);
+  }
+
+  function maskApiKey(k) {
+    if (!k) return '';
+    if (typeof k !== 'string') k = String(k);
+    if (k.length <= 1) return k;
+    return k[0] + '*'.repeat(Math.max(0, k.length - 1));
   }
 
   function ensureAttackDebugContext() {
@@ -374,12 +381,16 @@
   function setPanelMinHeightFromSettings() {
     const panel = document.getElementById('futa-panel');
     if (!panel) return;
+    if (panel.hidden || panel.hasAttribute('hidden')) return;
     const content = panel.querySelector('.futa-content');
     if (!content) return;
 
+    const explicitHeight = panel.style.height && panel.style.height.trim() !== '';
     const viewportCap = Math.min(window.innerHeight - FUTA_DRAG_MARGIN * 2, 640);
     const cappedPanel = Math.max(260, viewportCap);
     panel.style.maxHeight = `${cappedPanel}px`;
+    if (!explicitHeight) {
+    }
 
     const headerHeight = panel.querySelector('.futa-header')?.offsetHeight || 0;
     const tabsHeight = panel.querySelector('.futa-tabs')?.offsetHeight || 0;
@@ -391,474 +402,40 @@
     const chromeAllowance = headerHeight + tabsHeight + bannerHeight + 48;
     const available = Math.max(220, cappedPanel - chromeAllowance);
 
-    content.style.minHeight = `${available}px`;
+    content.style.minHeight = `0px`;
     content.style.maxHeight = `${available}px`;
+    requestAnimationFrame(() => {
+      try {
+        if (content.scrollHeight <= content.clientHeight) {
+          content.style.overflowY = 'hidden';
+        } else {
+          content.style.overflowY = 'auto';
+        }
+      } catch (e) {}
+    });
+  }
+
+  function attachPanelSizePersistence(wrapper) {
+    const MIN_W = 260, MIN_H = 220;
+    try {
+      const ro = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const el = entry.target;
+          if (el.hasAttribute('hidden')) continue;
+          const w = Math.round(entry.contentRect.width);
+          const h = Math.round(entry.contentRect.height);
+          if (w < MIN_W || h < MIN_H) continue;
+          GM.setValue('futa_panel_width', w);
+          GM.setValue('futa_panel_height', h);
+        }
+      });
+      ro.observe(wrapper);
+    } catch (e) {}
   }
 
   function addCustomStyles() {
-    debugLog("Injecting custom styles...");
-    GM_addStyle(`
-      #futa-toggle-button {
-        position: fixed;
-        bottom: 24px;
-        right: 24px;
-        z-index: 2147483646;
-        border: none;
-        border-radius: 999px;
-        padding: 12px 18px;
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
-        box-shadow: 0 12px 25px rgba(0, 0, 0, 0.35);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        cursor: grab;
-        user-select: none;
-        touch-action: none;
-      }
-      #futa-toggle-button:focus-visible {
-        outline: 2px solid rgba(111, 147, 255, 0.85);
-        outline-offset: 2px;
-      }
-      #futa-toggle-button:hover {
-        transform: translateY(-1px);
-      }
-      body.dark-mode #futa-toggle-button {
-        background: linear-gradient(135deg, #6f5bff, #2f9dff);
-        color: #ffffff;
-      }
-      body:not(.dark-mode) #futa-toggle-button {
-        background: linear-gradient(135deg, #4756ff, #00b7ff);
-        color: #ffffff;
-      }
-      #futa-toggle-button.active {
-        box-shadow: 0 18px 28px rgba(87, 133, 255, 0.45);
-      }
-      #futa-toggle-button.futa-dragging {
-        cursor: grabbing;
-        transform: none !important;
-      }
-      #futa-toggle-button img {
-        width: 28px;
-        height: 28px;
-        display: block;
-        pointer-events: none;
-      }
-      /* Alert state: when there are active Charlemagne alerts use a yellow highlight (less orange) */
-      #futa-toggle-button.futa-alert-active {
-        background: linear-gradient(135deg, #ffd24a, #ffdb4d) !important;
-        color: #111 !important;
-        box-shadow: 0 18px 34px rgba(255, 198, 34, 0.35) !important;
-      }
-      #futa-toggle-button .sr-only {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        margin: -1px;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        white-space: nowrap;
-        border: 0;
-      }
-
-      #futa-panel {
-        position: fixed;
-        bottom: 88px;
-        right: 24px;
-        width: min(360px, calc(100vw - 40px));
-        max-height: min(80vh, 640px);
-        display: flex;
-        flex-direction: column;
-        border-radius: 16px;
-        background: #1e2333;
-        color: #f5f7ff;
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        box-shadow: 0 24px 40px rgba(0, 0, 0, 0.45);
-        z-index: 2147483645;
-        font-family: "Roboto", "Open Sans", Arial, sans-serif;
-        font-size: 13px;
-        line-height: 1.45;
-        backdrop-filter: blur(14px);
-      }
-      body:not(.dark-mode) #futa-panel {
-        background: rgba(255, 255, 255, 0.98);
-        color: #1d1f28;
-        border: 1px solid rgba(16, 22, 48, 0.08);
-        box-shadow: 0 18px 36px rgba(25, 42, 89, 0.22);
-        backdrop-filter: unset;
-      }
-      #futa-panel[hidden] {
-        display: none !important;
-      }
-
-      #futa-panel .futa-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 18px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        cursor: grab;
-        user-select: none;
-        touch-action: none;
-      }
-      body:not(.dark-mode) #futa-panel .futa-header {
-        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-        background: linear-gradient(180deg, #eef2f6, #e6eaee);
-        color: #1d1f28;
-      }
-      #futa-panel .futa-header.grabbing {
-        cursor: grabbing;
-      }
-      #futa-panel.futa-dragging {
-        box-shadow: 0 30px 45px rgba(0, 0, 0, 0.55);
-      }
-      #futa-panel .futa-title {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      #futa-panel .futa-title img {
-        width: 32px;
-        height: 32px;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-      }
-      #futa-panel .futa-title-text {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        font-weight: 600;
-      }
-      #futa-panel .futa-title-primary {
-        font-size: 15px;
-        letter-spacing: 0.03em;
-      }
-      #futa-panel .futa-title-sub {
-        font-size: 11px;
-        opacity: 0.7;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-      }
-      #futa-panel .futa-tabs {
-        display: flex;
-        gap: 6px;
-        padding: 10px 14px;
-        background: rgba(255, 255, 255, 0.04);
-      }
-      body:not(.dark-mode) #futa-panel .futa-tabs {
-        background: rgba(0, 0, 0, 0.04);
-      }
-      #futa-panel .futa-tab {
-        flex: 1;
-        border: none;
-        border-radius: 12px;
-        padding: 10px 12px;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        cursor: pointer;
-        transition: background 0.2s ease, transform 0.1s ease, color 0.2s ease;
-        background: transparent;
-        color: inherit;
-      }
-      #futa-panel .futa-tab:hover {
-        background: rgba(255, 255, 255, 0.12);
-        transform: translateY(-1px);
-      }
-      body:not(.dark-mode) #futa-panel .futa-tab:hover {
-        background: rgba(0, 0, 0, 0.08);
-      }
-      /* Active tab: subtle, theme-matching highlight */
-      #futa-panel .futa-tab.active {
-        background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
-        color: inherit;
-        box-shadow: 0 6px 10px rgba(0, 0, 0, 0.18);
-        border: 1px solid rgba(255,255,255,0.04);
-      }
-
-      /* Quick highlight: subtle outline consistent with theme */
-      #futa-panel button.torn-btn.futa-quick-highlight {
-        box-shadow: 0 0 0 2px rgba(255,255,255,0.06), 0 6px 14px rgba(0,0,0,0.22);
-        border-color: rgba(255,255,255,0.12);
-      }
-
-      #futa-panel .futa-content {
-        padding: 16px 18px 18px;
-        overflow-y: auto;
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-      #futa-panel .futa-tab-panel {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-      #futa-panel .futa-tab-panel[hidden] {
-        display: none !important;
-      }
-
-      #check-summary-box {
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 14px;
-        background: rgba(0, 0, 0, 0.22);
-        font-size: 13px;
-        line-height: 1.55;
-        white-space: pre-line;
-      }
-      body:not(.dark-mode) #check-summary-box {
-        background: rgba(0, 0, 0, 0.04);
-        border-color: rgba(0, 0, 0, 0.1);
-      }
-
-      #action-buttons {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      #action-buttons .button-row {
-        display: flex;
-        gap: 10px;
-        align-items: stretch;
-      }
-      #action-buttons button {
-        flex: 1;
-        padding: 10px 12px;
-        border-radius: 12px;
-        font-size: 13px;
-        border-width: 2px !important;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      /* Standard button appearance (neutral for both themes) */
-      #futa-panel button.torn-btn {
-        background: rgba(255, 255, 255, 0.04);
-        color: inherit;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        transition: transform 0.1s ease, background 0.15s ease, opacity 0.12s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 10px 12px;
-        border-radius: 10px;
-      }
-      #futa-panel button.torn-btn:hover:not([disabled]) {
-        background: rgba(255, 255, 255, 0.08);
-        transform: translateY(-1px);
-      }
-      body:not(.dark-mode) #futa-panel button.torn-btn {
-        background: rgba(0, 0, 0, 0.04);
-        border: 1px solid rgba(0, 0, 0, 0.08);
-      }
-      body:not(.dark-mode) #futa-panel button.torn-btn:hover:not([disabled]) {
-        background: rgba(0, 0, 0, 0.06);
-      }
-      #futa-panel button.torn-btn:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-        transform: none;
-      }
-
-      /* Primary button variant (used for Save) */
-      #futa-panel button.torn-btn.primary {
-        background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
-        border: 1px solid rgba(255,255,255,0.12);
-        color: inherit;
-        font-weight: 700;
-      }
-      body:not(.dark-mode) #futa-panel button.torn-btn.primary {
-        background: linear-gradient(135deg, #f4f6f9, #eef2f6);
-        border: 1px solid rgba(0,0,0,0.08);
-        color: #111;
-      }
-
-      #futa-panel .futa-inline-field {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: nowrap;
-        width: 100%;
-      }
-      #futa-panel .futa-inline-field .field-label {
-        font-size: 12px;
-        font-weight: 400;
-        white-space: nowrap;
-        margin-right: 4px;
-      }
-      #futa-panel .futa-inline-field input[type="text"],
-      #futa-panel .futa-inline-field select {
-        flex: 1 1 auto;
-        margin: 0;
-      }
-      #futa-panel .futa-inline-field button.torn-btn {
-        flex: 0 0 auto;
-        padding: 8px 14px;
-      }
-      #futa-panel .quick-attack-inline {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 12px;
-        font-weight: 400;
-        user-select: none;
-        padding: 0px 0;
-        margin: 0;
-      }
-      #futa-panel .quick-attack-inline span {
-        white-space: nowrap;
-      }
-      #futa-panel .quick-attack-inline input[type="checkbox"] {
-        margin: 0;
-      }
-      #futa-panel .quick-attack-inline select {
-        flex: 0 0 120px;
-        margin: 0;
-        font-weight: 300;
-      }
-
-      #futa-panel .collapsible {
-        border-radius: 14px;
-        overflow: hidden;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(0, 0, 0, 0.18);
-      }
-      body:not(.dark-mode) #futa-panel .collapsible {
-        background: rgba(0, 0, 0, 0.02);
-        border-color: rgba(0, 0, 0, 0.08);
-      }
-      #futa-panel .collapsible-header {
-        cursor: pointer;
-        font-weight: 600;
-        padding: 12px 16px;
-        user-select: none;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        letter-spacing: 0.04em;
-      }
-      #futa-panel .collapsible-header::after {
-        content: "▾";
-        font-size: 14px;
-        opacity: 0.7;
-        transition: transform 0.2s ease;
-      }
-      #futa-panel .collapsible.collapsed .collapsible-header::after {
-        transform: rotate(-90deg);
-      }
-      #futa-panel .collapsible-content {
-        padding: 14px 16px;
-        border-top: 1px solid rgba(255, 255, 255, 0.05);
-        display: block;
-      }
-      body:not(.dark-mode) #futa-panel .collapsible-content {
-        border-top-color: rgba(0, 0, 0, 0.08);
-      }
-      #futa-panel .collapsible-content label {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 12px;
-        line-height: 1.3;
-        padding: 0px 0;
-        margin: 0;
-        font-weight: 400;
-      }
-      #futa-panel .collapsible-content label + label {
-        margin-top: 2px;
-      }
-      #futa-panel .collapsible-content label input[type="checkbox"] {
-        margin: 0;
-      }
-      #futa-panel .collapsible-content input[type="text"],
-      #futa-panel .collapsible-content input[type="number"],
-      #futa-panel .collapsible-content select {
-        width: 100%;
-        padding: 6px 8px;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(0, 0, 0, 0.20);
-        color: inherit;
-        transition: border 0.2s ease, box-shadow 0.2s ease;
-        margin: 4px 0 8px;
-      }
-      body:not(.dark-mode) #futa-panel .collapsible-content input[type="text"],
-      body:not(.dark-mode) #futa-panel .collapsible-content input[type="number"],
-      body:not(.dark-mode) #futa-panel .collapsible-content select {
-        background: rgba(255, 255, 255, 0.96);
-        border-color: rgba(0, 0, 0, 0.1);
-      }
-      #futa-panel .collapsible-content input[type="text"]:focus,
-      #futa-panel .collapsible-content input[type="number"]:focus,
-      #futa-panel .collapsible-content select:focus {
-        outline: none;
-        border-color: rgba(113, 159, 255, 0.8);
-        box-shadow: 0 0 0 3px rgba(113, 159, 255, 0.25);
-      }
-
-      #futa-panel #quick-attack-action {
-        padding: 2px 6px;
-        min-height: 26px;
-        line-height: 1.2;
-      }
-      #futa-panel .execute-inline span {
-        white-space: nowrap;
-        font-weight: 400;
-      }
-      #futa-panel .execute-threshold {
-        font-weight: 500;
-        padding: 0 6px;
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.06);
-        font-variant-numeric: tabular-nums;
-      }
-
-      #settings-api-status {
-        text-align: center;
-        font-size: 12px;
-        line-height: 1.6;
-        padding: 12px 16px;
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.18);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-      }
-      body:not(.dark-mode) #settings-api-status {
-        background: rgba(0, 0, 0, 0.04);
-        border-color: rgba(0, 0, 0, 0.08);
-      }
-
-      #persistent-banner {
-        font-size: 11px;
-        text-align: center;
-        padding: 10px 14px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        display: none;
-        background: rgba(255, 94, 94, 0.12);
-      }
-      body:not(.dark-mode) #persistent-banner {
-        border-top-color: rgba(0, 0, 0, 0.08);
-        background: rgba(255, 95, 95, 0.18);
-        color: #2d2d2d;
-      }
-      #persistent-banner strong {
-        font-weight: 700;
-      }
-
-      /* Flicker-free hiding via root classes + :has() */
-      html.futa-hide-primary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Primary"]) img { display: none !important; }
-      html.futa-hide-secondary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Secondary"]) img { display: none !important; }
-      html.futa-hide-melee .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Melee"]) img { display: none !important; }
-      html.futa-hide-temp .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Temporary"]) img { display: none !important; }
-    `);
+  debugLog("Injecting custom styles...");
+  GM_addStyle(`#futa-toggle-button{position:fixed;bottom:24px;right:24px;z-index:2147483646;border:none;border-radius:999px;padding:12px 18px;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;transition:transform .15s ease,box-shadow .2s ease,background .2s ease;box-shadow:0 12px 25px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;gap:8px;cursor:grab;user-select:none;touch-action:none}#futa-toggle-button:focus-visible{outline:2px solid rgba(111,147,255,.85);outline-offset:2px}#futa-toggle-button:hover{transform:translateY(-1px)}body.dark-mode #futa-toggle-button{background:linear-gradient(135deg,#6f5bff,#2f9dff);color:#fff}body:not(.dark-mode) #futa-toggle-button{background:linear-gradient(135deg,#4756ff,#00b7ff);color:#fff}#futa-toggle-button.active{box-shadow:0 18px 28px rgba(87,133,255,.45)}#futa-toggle-button.futa-dragging{cursor:grabbing;transform:none!important}#futa-toggle-button img{width:28px;height:28px;display:block;pointer-events:none}#futa-toggle-button.futa-alert-active{background:linear-gradient(135deg,#ffd24a,#ffdb4d)!important;color:#111!important;box-shadow:0 18px 34px rgba(255,198,34,.35)!important}#futa-toggle-button .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}#futa-panel{position:fixed;bottom:72px;right:24px;width:min(320px,calc(100vw - 40px));max-height:min(70vh,520px);display:flex;flex-direction:column;border-radius:16px;background:#1e2333;color:#f5f7ff;border:1px solid rgba(255,255,255,.06);box-shadow:0 24px 40px rgba(0,0,0,.45);z-index:2147483645;font-family:"Roboto","Open Sans",Arial,sans-serif;font-size:13px;line-height:1.45;backdrop-filter:blur(14px)}body:not(.dark-mode) #futa-panel{background:rgba(255,255,255,.98);color:#1d1f28;border:1px solid rgba(16,22,48,.08);box-shadow:0 18px 36px rgba(25,42,89,.22);backdrop-filter:unset}#futa-panel[hidden]{display:none!important}#futa-panel .futa-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);cursor:grab;user-select:none;touch-action:none;position:sticky;top:0;z-index:10;--futa-header-height:56px}body:not(.dark-mode) #futa-panel .futa-header{border-bottom:1px solid rgba(0,0,0,.08);background:linear-gradient(180deg,#eef2f6,#e6eaee);color:#1d1f28}#futa-panel .futa-header.grabbing{cursor:grabbing}#futa-panel.futa-dragging{box-shadow:0 30px 45px rgba(0,0,0,.55)}#futa-panel .futa-title{display:flex;align-items:center;gap:10px}#futa-panel .futa-title img{width:32px;height:32px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.45)}#futa-panel .futa-title-text{display:flex;flex-direction:column;gap:2px;font-weight:600}#futa-panel .futa-title-primary{font-size:15px;letter-spacing:.03em}#futa-panel .futa-title-sub{font-size:10px;line-height:1;opacity:.7;letter-spacing:.04em;text-transform:uppercase}#futa-panel .futa-tabs{display:flex;gap:6px;padding:6px 8px;background:rgba(255,255,255,.04);align-items:center;height:36px;position:sticky;top:var(--futa-header-height,56px);z-index:9;backdrop-filter:inherit}body:not(.dark-mode) #futa-panel .futa-tabs{background:rgba(0,0,0,.04)}#futa-panel .futa-tab{flex:1;border:none;border-radius:10px;padding:6px 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;transition:background .15s ease,transform .08s ease,color .15s ease;background:transparent;color:inherit;height:28px;display:inline-flex;align-items:center;justify-content:center}#futa-panel .futa-tab:hover{background:rgba(255,255,255,.12);transform:translateY(-1px)}body:not(.dark-mode) #futa-panel .futa-tab:hover{background:rgba(0,0,0,.08)}#futa-panel .futa-tab.active{background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.02));color:inherit;box-shadow:0 6px 10px rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.04)}#futa-panel button.torn-btn.futa-quick-highlight{box-shadow:0 0 0 2px rgba(255,255,255,.06),0 6px 14px rgba(0,0,0,.22);border-color:rgba(255,255,255,.12)}#futa-panel .futa-content{padding:16px 18px 18px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:18px}#futa-panel .futa-tab-panel{display:flex;flex-direction:column;gap:16px}#futa-panel .futa-tab-panel[hidden]{display:none!important}#check-summary-box{border-radius:14px;border:1px solid rgba(255,255,255,.08);padding:14px;background:rgba(0,0,0,.22);font-size:13px;line-height:1.55;white-space:pre-line}body:not(.dark-mode) #check-summary-box{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.1)}#action-buttons{display:flex;flex-direction:column;gap:10px}#action-buttons .button-row{display:flex;gap:10px;align-items:stretch}#action-buttons button{flex:1;padding:10px 12px;border-radius:12px;font-size:13px;border-width:2px!important;display:flex;align-items:center;justify-content:center}#futa-panel button.torn-btn{background:rgba(255,255,255,.04);color:inherit;border:1px solid rgba(255,255,255,.08);transition:transform .1s ease,background .15s ease,opacity .12s ease;display:flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:10px}#futa-panel button.torn-btn:hover:not([disabled]){background:rgba(255,255,255,.08);transform:translateY(-1px)}body:not(.dark-mode) #futa-panel button.torn-btn{background:rgba(0,0,0,.04);border:1px solid rgba(0,0,0,.08)}body:not(.dark-mode) #futa-panel button.torn-btn:hover:not([disabled]){background:rgba(0,0,0,.06)}#futa-panel button.torn-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}#futa-panel button.torn-btn.primary{background:linear-gradient(135deg,rgba(255,255,255,.08),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.12);color:inherit;font-weight:700}body:not(.dark-mode) #futa-panel button.torn-btn.primary{background:linear-gradient(135deg,#f4f6g9,#eef2f6);border:1px solid rgba(0,0,0,.08);color:#111}#futa-panel .futa-inline-field{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;width:100%}#futa-panel .futa-inline-field .field-label{font-size:12px;font-weight:400;white-space:nowrap;margin-right:4px}#futa-panel .futa-inline-field input[type="text"],#futa-panel .futa-inline-field select{flex:1 1 auto;margin:0}#futa-panel .futa-inline-field button.torn-btn{flex:0 0 auto;padding:8px 10px;font-size:13px;height:auto;min-width:64px}#futa-panel .quick-attack-inline{display:flex;align-items:center;gap:4px;font-size:12px;font-weight:300;user-select:none}#futa-panel .quick-attack-inline span{white-space:nowrap}#futa-panel .quick-attack-inline input[type="checkbox"]{margin:0}#futa-panel .quick-attack-inline select{flex:0 0 80px;margin:0;font-weight:300;padding:6px 8px;font-size:12px;line-height:1;box-sizing:border-box;appearance:none}#futa-panel .quick-attack-inline input[type="checkbox"]{margin:0 6px 0 0;transform:translateY(1px)}#save-api-key.torn-btn{padding:6px 8px!important;font-size:12px!important;min-width:48px;height:auto}#content-settings #save-api-key.torn-btn,#futa-panel .collapsible-content #save-api-key.torn-btn{padding:4px 8px!important;font-size:12px!important;min-width:44px!important;height:28px!important;line-height:1!important}#futa-panel .collapsible{border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.18)}body:not(.dark-mode) #futa-panel .collapsible{background:rgba(0,0,0,.02);border-color:rgba(0,0,0,.08)}#futa-panel .collapsible-header{cursor:pointer;font-weight:600;padding:8px 12px;font-size:13px;user-select:none;display:flex;align-items:center;justify-content:space-between;letter-spacing:.03em}#futa-panel .collapsible-header::after{content:"▾";font-size:14px;opacity:.7;transition:transform .2s ease}#futa-panel .collapsible.collapsed .collapsible-header::after{transform:rotate(-90deg)}#futa-panel .collapsible-content{padding:14px 16px;border-top:1px solid rgba(255,255,255,.05);display:block}body:not(.dark-mode) #futa-panel .collapsible-content{border-top-color:rgba(0,0,0,.08)}#futa-panel .collapsible-content label{display:flex;align-items:center;gap:4px;font-size:12px;line-height:1.3;padding:0;margin:0;font-weight:400}#futa-panel .collapsible-content label+label{margin-top:2px}#futa-panel .collapsible-content label input[type="checkbox"]{margin:0}#futa-panel .collapsible-content input[type="text"],#futa-panel .collapsible-content input[type="number"],#futa-panel .collapsible-content select{width:100%;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.2);color:inherit;transition:border .2s ease,box-shadow .2s ease;margin:4px 0 8px}body:not(.dark-mode) #futa-panel .collapsible-content input[type="text"],body:not(.dark-mode) #futa-panel .collapsible-content input[type="number"],body:not(.dark-mode) #futa-panel .collapsible-content select{background:rgba(255,255,255,.96);border-color:rgba(0,0,0,.1)}#futa-panel .collapsible-content input[type="text"]:focus,#futa-panel .collapsible-content input[type="number"]:focus,#futa-panel .collapsible-content select:focus{outline:none;border-color:rgba(113,159,255,.8);box-shadow:0 0 0 3px rgba(113,159,255,.25)}#futa-panel #quick-attack-action{padding:1px 2px}#futa-panel .execute-inline span{white-space:nowrap;font-weight:400}#futa-panel .execute-threshold{font-weight:500;padding:0 6px;border-radius:8px;background:rgba(255,255,255,.06);font-variant-numeric:tabular-nums}#settings-api-status{text-align:center;font-size:12px;line-height:1.6;padding:12px 16px;border-radius:12px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.08)}body:not(.dark-mode) #settings-api-status{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.08)}#persistent-banner{font-size:11px;text-align:center;padding:10px 14px;border-top:1px solid rgba(255,255,255,.08);display:none;background:rgba(255,94,94,.12)}body:not(.dark-mode) #persistent-banner{border-top-color:rgba(0,0,0,.08);background:rgba(255,95,95,.18);color:#2d2d2d}#persistent-banner strong{font-weight:700}html.futa-hide-primary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Primary"]) img{display:none!important}html.futa-hide-secondary .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Secondary"]) img{display:none!important}html.futa-hide-melee .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Melee"]) img{display:none!important}html.futa-hide-temp .weaponWrapper___h3buK:has(.topMarker___OjRyU[id*="Temporary"]) img{display:none!important}@media(max-width:600px){#futa-toggle-button{bottom:12px;right:12px;padding:8px 10px;font-size:11px}#futa-toggle-button img{width:20px;height:20px}#futa-panel{width:min(320px,calc(100vw - 28px));right:12px;bottom:72px;border-radius:12px;font-size:12px}#futa-panel .futa-header{padding:10px 12px}#futa-panel .futa-content{padding:12px;gap:12px}#futa-panel .futa-tabs{padding:8px 10px;gap:4px}#futa-panel .futa-tab{padding:8px 10px;font-size:11px}#futa-panel button.torn-btn{padding:8px 10px;font-size:12px}}#futa-panel{resize:none;overflow:auto;min-width:260px;min-height:220px}#futa-panel.futa-no-corner-resize{resize:both}#futa-panel .futa-resize-handle{position:absolute;width:14px;height:14px;background:transparent;z-index:2147483650;opacity:.6}#futa-panel .futa-resize-handle::after{content:'';position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid rgba(255,255,255,.18);border-bottom:2px solid rgba(255,255,255,.18);border-radius:2px;transform:rotate(0)}#futa-panel:hover .futa-resize-handle::after{opacity:1}#futa-panel .futa-resize-nw{top:4px;left:4px;cursor:nwse-resize}#futa-panel .futa-resize-ne{top:4px;right:4px;cursor:nesw-resize}#futa-panel .futa-resize-sw{bottom:4px;left:4px;cursor:sw-resize}#futa-panel .futa-resize-se{bottom:4px;right:4px;cursor:nwse-resize}body.futa-on-pda #futa-toggle-button{padding:6px 8px;bottom:10px;right:10px}body.futa-on-pda #futa-toggle-button img{width:18px;height:18px}body.futa-on-pda #futa-panel{width:300px;right:10px;bottom:72px;font-size:12px}#futa-panel.futa-compact{width:260px!important;font-size:12px}@media(max-width:600px){#futa-panel.futa-compact{width:calc(100vw - 28px)!important;right:12px!important}}#futa-panel .futa-header{position:sticky;top:0;z-index:6;backdrop-filter:inherit}#futa-panel .futa-content{-webkit-overflow-scrolling:touch}`);
   }
 
   function applyHideClassesFromLocalStorage() {
@@ -875,7 +452,6 @@
       toggleRootHideClass(root, 'melee', map.melee);
       toggleRootHideClass(root, 'temp', map.temp);
     } catch (e) {
-      // no-op
     }
   }
 
@@ -1027,7 +603,6 @@
       const tornStatusPromise = fetchTornAPIStatus();
       FUTA.sharedPingData = (await pingDataPromise) || {};
       await tornStatusPromise;
-      debugLog("Shared pingData: " + JSON.stringify(FUTA.sharedPingData));
       debugLog("Shared tornApiStatus: " + FUTA.tornApiStatus);
       _updateBannerWithPingData(FUTA.sharedPingData);
       _updateSettingsAPIStatus(FUTA.sharedPingData);
@@ -1067,9 +642,7 @@
 
   const newBannerState = { charlStatus, charlColor, tornStatus, tornColor };
   FUTA._lastDisplayedConnection = FUTA._lastDisplayedConnection || null;
-  // Skip DOM writes (and noisy logs) when nothing visible has changed.
   if (FUTA._lastDisplayedConnection && JSON.stringify(FUTA._lastDisplayedConnection) === JSON.stringify(newBannerState)) {
-    debugLog("_updateBannerWithPingData skipped (no visible change)");
     return;
   }
   FUTA._lastDisplayedConnection = newBannerState;
@@ -1077,14 +650,13 @@
   const bannerEl = document.getElementById("persistent-banner");
   if (bannerEl) {
     bannerEl.innerHTML = `
-      Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
-      Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong>`;
+      Conn to Charlemage:: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
+      Conn to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong>`;
     bannerEl.style.display = (charlStatus !== "Established" || tornStatus !== "Established") ? "block" : "none";
   }
 }
 
 function _updateSettingsAPIStatus(pingData) {
-  // Update the settings panel status area. Only redraw when something changed.
   const storedCharlStatus = localStorage.getItem("charlemagne_status") || "No Connection";
   const { charlStatus, charlColor, tornStatus, tornColor } = pingData ? getConnectionStatus(pingData) : {
     charlStatus: storedCharlStatus,
@@ -1104,10 +676,10 @@ function _updateSettingsAPIStatus(pingData) {
   const statusEl = document.getElementById("settings-api-status");
   if (statusEl) {
     statusEl.innerHTML = `
-      Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
+      <span style="font-size:12px;">Connection to Charlemagne: <strong style="color: ${charlColor};">${charlStatus}</strong><br/>
       Connection to TornAPI: <strong style="color: ${tornColor};">${tornStatus}</strong><br/>
       Version: <a href="https://www.torn.com/forums.php#/p=threads&f=999&t=16460741&b=1&a=36891&to=25815503" target="_blank" style="color: inherit; text-decoration: underline;">${FUTA.VERSION}</a><br/>
-      Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank" style="color: inherit; text-decoration: underline;">Asemov</a>`;
+      Made by <a href="https://www.torn.com/profiles.php?XID=2270413" target="_blank" style="color: inherit; text-decoration: underline;">Asemov</a></span>`;
   }
 }
 
@@ -1222,15 +794,16 @@ function _updateSettingsAPIStatus(pingData) {
               <label><input type="checkbox" id="hide-melee"> Hide Melee</label>
               <label><input type="checkbox" id="hide-temp"> Hide Temp</label>
               <input type="checkbox" id="execute-toggle" />
-              <span>Execute:</span>
+              <span>Execute</span>
               <span id="execute-threshold-display" class="execute-threshold">--</span>
-              <label title="WIP"><input type="checkbox" id="assassinate-toggle" disabled> Assassinate <small style="margin-left:6px;color:#888">(WIP)</small></label>
+              <label title="WIP"><input type="checkbox" id="assassinate-toggle"> Assassinate <small style="margin-left:6px;color:#888">(WIP)</small></label>
             </div>
           </div>
           <div class="collapsible">
             <div class="collapsible-header">User Settings:</div>
             <div class="collapsible-content">
               <label><input type="checkbox" id="charlemagne-alerts"> Charlemagne Alerts</label>
+              <label><input type="checkbox" id="compact-mode-toggle"> Compact mode (mobile)</label>
               <label><input type="checkbox" id="ignore-bank"> ignore bank check</label>
               <label><input type="checkbox" id="ignore-medical"> ignore medical check</label>
               <label><input type="checkbox" id="ignore-booster"> ignore booster check</label>
@@ -1244,12 +817,142 @@ function _updateSettingsAPIStatus(pingData) {
       </div>
       <div id="persistent-banner"></div>
     `;
-    document.body.appendChild(wrapper);
+  document.body.appendChild(wrapper);
+    try {
+      const apiInput = wrapper.querySelector('#api-key');
+      if (apiInput) {
+        (async () => {
+          const stored = await GM.getValue('api_key', '');
+          apiInput.dataset.realKey = stored || '';
+          apiInput.value = maskApiKey(stored || '');
+          apiInput.dataset.futaMasked = (stored ? 'true' : 'false');
+          apiInput.addEventListener('focus', () => {
+            apiInput.dataset.futaMasked = 'false';
+            apiInput.value = apiInput.dataset.realKey || '';
+            setTimeout(() => {
+              try { apiInput.selectionStart = apiInput.selectionEnd = apiInput.value.length; } catch (e) {}
+            }, 0);
+          });
+          apiInput.addEventListener('blur', () => {
+            const v = apiInput.value.trim();
+            apiInput.dataset.realKey = v;
+            apiInput.dataset.futaMasked = 'true';
+            apiInput.value = maskApiKey(v);
+          });
+        })();
+      }
+    } catch (e) {
+      debugLog('API key masking init failed: ' + e);
+    }
     makeMovable(wrapper, {
       handle: wrapper.querySelector('.futa-header'),
       storageKey: 'futa_panel_position',
-      fallbackSize: { width: 360, height: 500 }
+      fallbackSize: { width: 320, height: 420 }
     });
+
+    try {
+      const savedW = Number(await GM.getValue('futa_panel_width', 0));
+      const savedH = Number(await GM.getValue('futa_panel_height', 0));
+      if (savedW >= 260 && savedH >= 220) {
+        wrapper.style.width = `${savedW}px`;
+        wrapper.style.height = `${savedH}px`;
+      }
+    } catch (e) {
+      debugLog('Error restoring saved panel size: ' + e);
+    }
+
+    try {
+      const h = document.createElement('div');
+      h.className = `futa-resize-handle futa-resize-se`;
+      h.style.touchAction = 'none';
+      h.style.position = 'absolute';
+      h.style.right = '0px';
+      h.style.bottom = '0px';
+      h.style.width = '18px';
+      h.style.height = '18px';
+      h.style.zIndex = '2147483650';
+      h.style.cursor = 'nwse-resize';
+      try {
+        const isDark = document.body.classList.contains('dark-mode');
+        const cueColor = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)';
+        h.style.borderRight = `2px solid ${cueColor}`;
+        h.style.borderBottom = `2px solid ${cueColor}`;
+        h.style.borderBottomRightRadius = '2px';
+      } catch (_) {}
+      wrapper.appendChild(h);
+
+      let resizing = false;
+      let resizeCorner = null;
+      let startX = 0, startY = 0, startW = 0, startH = 0, startLeft = 0, startTop = 0;
+
+      const onPointerDown = (ev) => {
+        const handle = ev.target.closest('.futa-resize-handle');
+        if (!handle) return;
+        ev.preventDefault();
+        resizing = true;
+        const m = handle.className.match(/futa-resize-(nw|ne|sw|se)/);
+        resizeCorner = m ? m[1] : null;
+        startX = ev.clientX;
+        startY = ev.clientY;
+        const rect = wrapper.getBoundingClientRect();
+        startW = rect.width;
+        startH = rect.height;
+        startLeft = rect.left + window.scrollX;
+        startTop = rect.top + window.scrollY;
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp, { once: true });
+      };
+
+      const onPointerMove = (ev) => {
+        if (!resizing) return;
+        ev.preventDefault();
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        let newW = startW;
+        let newH = startH;
+        let newLeft = startLeft;
+        let newTop = startTop;
+        if (resizeCorner === 'se') {
+          newW = Math.max(260, Math.round(startW + dx));
+          newH = Math.max(220, Math.round(startH + dy));
+        } else if (resizeCorner === 'sw') {
+          newW = Math.max(260, Math.round(startW - dx));
+          newH = Math.max(220, Math.round(startH + dy));
+          newLeft = Math.round(startLeft + dx);
+        } else if (resizeCorner === 'ne') {
+          newW = Math.max(260, Math.round(startW + dx));
+          newH = Math.max(220, Math.round(startH - dy));
+          newTop = Math.round(startTop + dy);
+        } else if (resizeCorner === 'nw') {
+          newW = Math.max(260, Math.round(startW - dx));
+          newH = Math.max(220, Math.round(startH - dy));
+          newLeft = Math.round(startLeft + dx);
+          newTop = Math.round(startTop + dy);
+        }
+        wrapper.style.width = `${newW}px`;
+        wrapper.style.height = `${newH}px`;
+        if (newLeft !== startLeft) wrapper.style.left = `${newLeft}px`;
+        if (newTop !== startTop) wrapper.style.top = `${newTop}px`;
+      };
+
+      const onPointerUp = (ev) => {
+        if (!resizing) return;
+        resizing = false;
+        resizeCorner = null;
+        document.removeEventListener('pointermove', onPointerMove);
+        try {
+          const rect = wrapper.getBoundingClientRect();
+          GM.setValue('futa_panel_width', Math.round(rect.width));
+          GM.setValue('futa_panel_height', Math.round(rect.height));
+        } catch (e) {}
+      };
+
+      wrapper.addEventListener('pointerdown', onPointerDown);
+    } catch (e) {
+      debugLog('Corner resize setup failed: ' + e);
+    }
+
+    attachPanelSizePersistence(wrapper);
     setPanelMinHeightFromSettings();
     if (!panelResizeListenerAttached) {
       panelResizeListenerAttached = true;
@@ -1259,7 +962,6 @@ function _updateSettingsAPIStatus(pingData) {
 
     await setupPanelEventListeners();
     setupCollapsibleSections();
-    // restore alerts setting and run initial check
     const alertsEnabled = await GM.getValue('charlemagne_alerts_enabled', false);
     FUTA.charlemagneAlertsEnabled = Boolean(alertsEnabled);
     if (FUTA.charlemagneAlertsEnabled) {
@@ -1374,7 +1076,17 @@ function _updateSettingsAPIStatus(pingData) {
       }
 
       if (target.closest("#save-api-key")) {
-        const key = document.getElementById("api-key").value.trim();
+        const apiEl = document.getElementById("api-key");
+        let key = '';
+        if (apiEl) {
+          if (apiEl.dataset && apiEl.dataset.futaMasked === 'true') {
+            key = apiEl.dataset.realKey || '';
+          } else {
+            key = (apiEl.value || '').trim();
+          }
+        } else {
+          key = document.getElementById("api-key").value.trim();
+        }
         if (!key) return alert("Please enter an API key.");
         await GM.setValue("api_key", key);
         await GM.setValue("api_key_provided", true);
@@ -1520,7 +1232,6 @@ function _updateSettingsAPIStatus(pingData) {
       }
       setPanelMinHeightFromSettings();
     });
-  await GM.setValue('assassinate', false);
   const toggles = [
       { id: "quick-attack-toggle", key: "quick_attack_enabled" },
       { id: "open-attack-new-tab", key: "open_attack_new_tab" },
@@ -1543,12 +1254,14 @@ function _updateSettingsAPIStatus(pingData) {
       const el = document.getElementById(id);
       if (el) {
         el.checked = await GM.getValue(key, false);
+        if (key === 'assassinate') FUTA.assassinate = el.checked;
         if (key === 'hide_primary') toggleRootHideClass(document.documentElement, 'primary', el.checked);
         if (key === 'hide_secondary') toggleRootHideClass(document.documentElement, 'secondary', el.checked);
         if (key === 'hide_melee') toggleRootHideClass(document.documentElement, 'melee', el.checked);
         if (key === 'hide_temp') toggleRootHideClass(document.documentElement, 'temp', el.checked);
         el.addEventListener("change", async () => {
           await GM.setValue(key, el.checked);
+          if (key === 'assassinate') FUTA.assassinate = el.checked;
           if (key === 'hide_primary') { localStorage.setItem('futa_hide_primary', String(el.checked)); toggleRootHideClass(document.documentElement, 'primary', el.checked); }
           if (key === 'hide_secondary') { localStorage.setItem('futa_hide_secondary', String(el.checked)); toggleRootHideClass(document.documentElement, 'secondary', el.checked); }
           if (key === 'hide_melee') { localStorage.setItem('futa_hide_melee', String(el.checked)); toggleRootHideClass(document.documentElement, 'melee', el.checked); }
@@ -1590,6 +1303,26 @@ function _updateSettingsAPIStatus(pingData) {
     }
   }
 
+    (async () => {
+      try {
+        const compactToggle = document.getElementById('compact-mode-toggle');
+        if (compactToggle) {
+          const isPDA = !!(window.location.hostname && window.location.hostname.includes('tornpda'));
+          const stored = await GM.getValue('futa_compact_mode', isPDA);
+          compactToggle.checked = Boolean(stored);
+          const panelEl = document.getElementById('futa-panel');
+          if (panelEl) panelEl.classList.toggle('futa-compact', Boolean(stored));
+          compactToggle.addEventListener('change', async () => {
+            await GM.setValue('futa_compact_mode', compactToggle.checked);
+            if (panelEl) panelEl.classList.toggle('futa-compact', compactToggle.checked);
+            setPanelMinHeightFromSettings();
+          });
+        }
+      } catch (e) {
+        debugLog('Compact mode init failed: ' + e);
+      }
+    })();
+
   async function checkAlerts() {
     try {
       const alerts = [];
@@ -1604,22 +1337,17 @@ function _updateSettingsAPIStatus(pingData) {
       if (api_key) {
         const summary = await fetchCheckSummary();
         const lines = (summary || '').split(/\n+/).map(l => l.trim()).filter(Boolean);
-  // Nerve refill
-  const nerveLine = lines.find(l => /nerve/i.test(l) && /refill/i.test(l));
-  if (nerveLine && /haven't used/i.test(nerveLine)) alerts.push("You haven't used your nerve refill today.");
-        // Drugs
+        const nerveLine = lines.find(l => /nerve/i.test(l) && /refill/i.test(l));
+        if (nerveLine && /haven't used/i.test(nerveLine)) alerts.push("You haven't used your nerve refill today.");
         if (!ignores.ignore_drug && lines.some(l => /not currently on any drugs/i.test(l) || /no drugs/i.test(l))) {
           alerts.push("You're not currently on any drugs.");
         }
-        // Booster
         if (!ignores.ignore_booster && lines.some(l => /not using your booster cooldown/i.test(l) || /booster/i.test(l) && /0\b/.test(l))) {
           alerts.push("You're not using your booster cooldown.");
         }
-        // Medical
         if (!ignores.ignore_medical && lines.some(l => /not using your medical cooldown/i.test(l) || /medical/i.test(l) && /0\b/.test(l))) {
           alerts.push("You're not using your medical cooldown.");
         }
-        // Travel / Racing: only alert when the API explicitly reports NOT traveling/racing
         if (!ignores.ignore_travel) {
           const negativeTravelLine = lines.find(l => /not currently racing or traveling|not currently racing|not currently traveling|not currently travelling/i.test(l));
           if (negativeTravelLine) {
@@ -1660,8 +1388,8 @@ function _updateSettingsAPIStatus(pingData) {
         }
       }
       const uniqueAlerts = Array.from(new Set(alerts.map(a => (a || '').trim()))).filter(Boolean);
-  FUTA._lastAlerts = uniqueAlerts;
-  updateToggleBadge(uniqueAlerts.length);
+      FUTA._lastAlerts = uniqueAlerts;
+      updateToggleBadge(uniqueAlerts.length);
       const summaryBox = document.getElementById('check-summary-box');
       if (summaryBox) {
         if (uniqueAlerts.length === 0) {
@@ -1824,7 +1552,7 @@ function _updateSettingsAPIStatus(pingData) {
       if (!isAttackUrl(url)) return;
       event.preventDefault();
       event.stopPropagation();
-      try { event.stopImmediatePropagation(); } catch (_err) { /* ignore */ }
+      try { event.stopImmediatePropagation(); } catch (_err) { }
       maybeHandleAttackNavigation(url, 'click');
     };
     document.addEventListener('click', handler, true);
@@ -1936,6 +1664,93 @@ async function enableQuickAttackAndHiding() {
   let fightState = "pre-fight";
   let lastClickTime = 0;
   let hasAssassinated = false;
+  let shouldForceAssassinate = false;
+
+  const globalWeaponClickInterceptor = (e) => {
+    try {
+      if (!e.isTrusted) return;
+      const clicked = e.target && e.target.closest ? e.target.closest('.weaponWrapper___h3buK') : null;
+      if (!clicked) return;
+      const currentFightState = determineFightState();
+      if (currentFightState !== 'in-fight') return;
+      if (!FUTA.assassinate || hasAssassinated) {
+        if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: assassinate not armed or already used');
+        return;
+      }
+
+      const assassinateWrapper = Array.from(document.querySelectorAll('.weaponWrapper___h3buK'))
+        .find(w => w.querySelector('i.bonus-attachment-assassinate'));
+      if (!assassinateWrapper) {
+        shouldForceAssassinate = false;
+        if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: no assassinate wrapper found');
+        return;
+      }
+      if (assassinateWrapper === clicked) {
+        shouldForceAssassinate = false;
+        hasAssassinated = true;
+        if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: user clicked assassinate wrapper directly; marking consumed');
+        try { document.removeEventListener('click', globalWeaponClickInterceptor, true); } catch (_) {}
+        return;
+      }
+
+      shouldForceAssassinate = false;
+      hasAssassinated = true;
+      if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: redirecting first in-fight click to assassinate wrapper');
+      try { assassinateWrapper.dataset.futaSynthetic = '1'; } catch (_) {}
+      assassinateWrapper.click();
+      try { document.removeEventListener('click', globalWeaponClickInterceptor, true); } catch (_) {}
+      try {
+        const inner = assassinateWrapper.querySelector('.topMarker___OjRyU, button, a, [role="button"]');
+        const targetEl = inner || assassinateWrapper;
+        const rect = targetEl.getBoundingClientRect();
+        const cx = Math.round(rect.left + rect.width / 2);
+        const cy = Math.round(rect.top + rect.height / 2);
+        if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: dispatching pointer events to target:', targetEl.tagName, 'coords', cx, cy);
+        targetEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+        targetEl.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+        targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+
+        setTimeout(() => {
+          try {
+            const checkActive = () => {
+              const top = assassinateWrapper.querySelector('.topMarker___OjRyU[aria-pressed="true"], .topMarker___OjRyU.active, .topMarker___OjRyU[data-selected="true"]');
+              const glow = /\bglow[-_\w]*\b/.test(assassinateWrapper.className || '');
+              return !!top || glow;
+            };
+            if (checkActive()) {
+              if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: assassinate click registered');
+              return;
+            }
+            for (let attempt = 1; attempt <= 2; attempt++) {
+              if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: retrying assassinate click, attempt ' + attempt);
+              const tryEl = assassinateWrapper.querySelector('.topMarker___OjRyU, button, a, [role="button"]') || assassinateWrapper;
+              try { tryEl.click(); } catch (_) {}
+              try {
+                const r = tryEl.getBoundingClientRect();
+                const tx = Math.round(r.left + r.width / 2);
+                const ty = Math.round(r.top + r.height / 2);
+                tryEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: tx, clientY: ty, pointerType: 'mouse' }));
+                tryEl.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: tx, clientY: ty, pointerType: 'mouse' }));
+                tryEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: tx, clientY: ty }));
+              } catch (_) {}
+              if (checkActive()) {
+                if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: assassinate click registered on retry ' + attempt);
+                return;
+              }
+            }
+            if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor: failed to register assassinate click after retries');
+          } catch (err) {
+            if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor verify error: ' + err);
+          }
+        }, 150);
+      } catch (err) { if (FUTA.debugEnabled) debugLog('globalWeaponClickInterceptor fallback error: ' + err); }
+      e.stopPropagation();
+      e.preventDefault();
+    } catch (err) {
+      debugLog('globalWeaponClickInterceptor error: ' + err);
+    }
+  };
+  document.addEventListener('click', globalWeaponClickInterceptor, true);
 
   const isAttackPage = () => {
     return window.location.href.includes("loader.php?sid=attack") && window.location.search.includes("user2ID=");
@@ -1992,18 +1807,14 @@ async function enableQuickAttackAndHiding() {
       const newState = determineFightState();
       if (newState === "pre-fight" && prevState !== "pre-fight") {
         hasAssassinated = false;
+        shouldForceAssassinate = false;
         if (FUTA.debugEnabled) {
           initAttackDebug('state-pre-fight');
         }
       }
-      if (settings.assassinate && prevState !== "in-fight" && newState === "in-fight" && !hasAssassinated) {
-        debugLog("Assassinate: first in-fight detected, triggering perk weapon");
-        const wrapper = Array.from(document.querySelectorAll(".weaponWrapper___h3buK"))
-          .find(w => w.querySelector("i.bonus-attachment-assassinate"));
-        if (wrapper) {
-          hasAssassinated = true;
-          wrapper.click();
-        }
+      if (settings.assassinate && prevState !== "in-fight" && newState === "in-fight") {
+        debugLog("Assassinate: armed for first in-fight click");
+        shouldForceAssassinate = true;
       }
       if (newState === "post-fight") {
         void updateQuickAttackUI();
@@ -2027,6 +1838,7 @@ async function enableQuickAttackAndHiding() {
     try {
       if (!wrapper || wrapper.dataset.quickBound) return;
       wrapper.dataset.quickBound = "true";
+      if (FUTA.debugEnabled) debugLog('bindWeaponWrapper: bound wrapper', wrapper?.id || '(no-id)', wrapper?.className || '');
       const marker = wrapper.querySelector(".topMarker___OjRyU");
       const type = await getWeaponType(marker?.id || "");
       const img = wrapper.querySelector("img");
@@ -2052,7 +1864,14 @@ async function enableQuickAttackAndHiding() {
       }
 
       wrapper.addEventListener("click", async (e) => {
-        if (!e.isTrusted) return;
+        if (!e.isTrusted && wrapper.dataset.futaSynthetic !== '1') {
+          if (FUTA.debugEnabled) debugLog('bindWeaponWrapper: ignored non-trusted click and no synthetic marker present');
+          return;
+        }
+        if (wrapper.dataset.futaSynthetic === '1') {
+          try { delete wrapper.dataset.futaSynthetic; } catch (err) { wrapper.removeAttribute('data-futa-synthetic'); }
+          if (FUTA.debugEnabled) debugLog('bindWeaponWrapper: consumed synthetic click marker on wrapper');
+        }
         const now = Date.now();
         if (now - lastClickTime < 300) return;
         lastClickTime = now;
@@ -2065,6 +1884,21 @@ async function enableQuickAttackAndHiding() {
         }
 
         try {
+          if (currentFightState === "in-fight" && settings.assassinate && shouldForceAssassinate && !hasAssassinated) {
+            const assassinateWrapper = Array.from(document.querySelectorAll('.weaponWrapper___h3buK'))
+              .find(w => w.querySelector('i.bonus-attachment-assassinate'));
+            if (assassinateWrapper && assassinateWrapper !== wrapper) {
+              hasAssassinated = true;
+              shouldForceAssassinate = false;
+              debugLog('Assassinate: redirecting first in-fight click to assassinate weapon');
+              try { assassinateWrapper.dataset.futaSynthetic = '1'; } catch (err) { }
+              assassinateWrapper.click();
+              e.stopPropagation();
+              e.preventDefault();
+              return;
+            }
+          }
+
           const isExecEnabled = await GM.getValue('execute_enabled', false);
           if (isExecEnabled && currentFightState === "in-fight") {
             const execActive = await isExecuteActive();
@@ -2080,6 +1914,7 @@ async function enableQuickAttackAndHiding() {
                 });
               if (highlighted && highlighted !== wrapper) {
                 debugLog('Redirecting click to highlighted Execute weapon');
+                try { highlighted.dataset.futaSynthetic = '1'; } catch (err) { }
                 highlighted.click();
                 e.stopPropagation();
                 e.preventDefault();
@@ -2211,15 +2046,72 @@ async function updateQuickAttackUI() {
 }
 
   async function executeAttackNotifier() {
+    if (!(window.location.href.includes("loader.php?sid=attack") || window.location.href.includes("tornpda.com/attack"))) {
+      try {
+        const weaponSecond = document.getElementById('weapon_second');
+        if (weaponSecond) {
+          weaponSecond.style.background = '';
+          weaponSecond.style.removeProperty('background');
+          weaponSecond.style.removeProperty('background-color');
+        }
+        const wrappers = document.querySelectorAll('.weaponWrapper___h3buK');
+        wrappers.forEach(w => {
+          try {
+            if (w && w.style && w.style.background) {
+              w.style.background = '';
+              w.style.removeProperty('background');
+              w.style.removeProperty('background-color');
+            }
+          } catch (e) { }
+        });
+      } catch (e) { }
+      return;
+    }
+
     const execEnabled = await GM.getValue("execute_enabled", false);
 
     const clearExecuteHighlight = () => {
-      const weaponSecond = document.getElementById('weapon_second');
-      if (weaponSecond) weaponSecond.style.background = '';
+      try {
+        const weaponSecond = document.getElementById('weapon_second');
+        if (weaponSecond) {
+          weaponSecond.style.background = '';
+          weaponSecond.style.removeProperty('background');
+          weaponSecond.style.removeProperty('background-color');
+        }
+        const wrappers = document.querySelectorAll('.weaponWrapper___h3buK');
+        wrappers.forEach(w => {
+          try {
+            if (w && w.style && w.style.background) {
+              w.style.background = '';
+              w.style.removeProperty('background');
+              w.style.removeProperty('background-color');
+            }
+          } catch (e) { }
+        });
+      } catch (e) {
+        debugLog('clearExecuteHighlight error: ' + e);
+      }
     };
 
     if (!execEnabled) {
       clearExecuteHighlight();
+      if (FUTA.debugEnabled) debugLog('executeAttackNotifier: execute disabled, cleared highlights');
+      return;
+    }
+
+    if (FUTA.executeThreshold == null) {
+      try {
+        const extracted = extractExecuteThresholdFromDom();
+        FUTA.executeThreshold = extracted;
+        updateExecuteUI();
+      } catch (e) {
+        debugLog('executeAttackNotifier: error extracting execute threshold: ' + e);
+      }
+    }
+
+    if (FUTA.executeThreshold == null) {
+      clearExecuteHighlight();
+      if (FUTA.debugEnabled) debugLog('executeAttackNotifier: no execute perk threshold detected, skipping highlight');
       return;
     }
 
@@ -2242,14 +2134,16 @@ async function updateQuickAttackUI() {
       return;
     }
 
-    const thresholdPct = Number(await GM.getValue("attack_execute", "60"));
+    const thresholdPct = Number(await GM.getValue("attack_execute", "15"));
     const threshold = thresholdPct / 100;
 
     if ((currentHealth / maxHealth) <= threshold) {
       const weaponSecond = document.getElementById('weapon_second');
       if (weaponSecond) weaponSecond.style.background = 'red';
+      if (FUTA.debugEnabled) debugLog('executeAttackNotifier: execute active — weapon_second highlighted');
     } else {
       clearExecuteHighlight();
+      if (FUTA.debugEnabled) debugLog('executeAttackNotifier: execute not active at current HP — cleared highlights');
     }
   }
 
@@ -2257,6 +2151,15 @@ async function updateQuickAttackUI() {
     try {
       const execEnabled = await GM.getValue("execute_enabled", false);
       if (!execEnabled) return false;
+      if (FUTA.executeThreshold == null) {
+        try {
+          FUTA.executeThreshold = extractExecuteThresholdFromDom();
+          updateExecuteUI();
+        } catch (e) {
+          debugLog('isExecuteActive: error extracting execute threshold: ' + e);
+        }
+      }
+      if (FUTA.executeThreshold == null) return false;
       const healthElements = document.querySelectorAll('[id^=player-health-value]');
       if (!healthElements || healthElements.length < 2) return false;
       const parts = healthElements[1].innerText.split("/");
@@ -2336,6 +2239,12 @@ async function updateQuickAttackUI() {
     markAttackTabIfExpected();
     await maybeMinimizePanelForAttack('initialize');
     await GM.getValue("currentWarMode", "Peace");
+    try {
+      if (window.location.hostname && window.location.hostname.includes('tornpda')) {
+        document.body.classList.add('futa-on-pda');
+      }
+    } catch (e) {
+    }
     addCustomStyles();
     applyHideClassesFromLocalStorage();
     setupAttackLinkInterception();
